@@ -33,8 +33,10 @@ except ImportError:      # the bridge package stays usable without the RULA modu
     ErgoPrompt = RulaScore = None
 try:
     from telecraft_msgs.msg import CommandAck, MotionAuthority
+    from std_srvs.srv import SetBool, Trigger
 except ImportError:
     CommandAck = MotionAuthority = None
+    SetBool = Trigger = None
 
 X_RANGE = (-0.35, 0.35)      # lateral, stage X
 Z_RANGE = (-0.65, -0.10)     # forward is -Z; top of the canvas = far
@@ -84,6 +86,17 @@ class ConsoleNode(Node):
             self.create_subscription(MotionAuthority, "/telecraft/authority", lambda m: self.store("auth", m), latched)
             self.create_subscription(CommandAck, "/telecraft/ack", self.on_ack, 50)
         self.create_timer(1.0 / float(p("rate_hz").value), self.publish)
+        if Trigger is not None:
+            self.cli_reset = self.create_client(Trigger, "/safety_gate/reset")
+            self.cli_ready = self.create_client(SetBool, "/safety_gate/set_ready")
+
+    def reset_cell(self):
+        """FAULT / SAFE_STOP -> NOT_READY -> READY: what a supervisor does after acknowledging a fault."""
+        if Trigger is None or not self.cli_reset.service_is_ready():
+            return
+        fut = self.cli_reset.call_async(Trigger.Request())
+        fut.add_done_callback(lambda f: self.cli_ready.call_async(SetBool.Request(data=True)))
+        self.get_logger().info("cell reset requested from the console")
 
     def store(self, key, msg):
         with self.lock:
@@ -136,7 +149,7 @@ class Console:
         self.canvas = tk.Canvas(left, width=self.W, height=self.H, bg="#0f141b", highlightthickness=0, cursor="crosshair")
         self.canvas.pack()
         tk.Label(left, text="mouse: move hand   wheel: lift/lower   HOLD LEFT BUTTON: trigger (robot moves)\n"
-                            "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger   R: reset",
+                            "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger\nR: reset hand   X: reset the cell after a FAULT",
                  fg="#98a3b3", bg="#1b2430", justify="left", font=("DejaVu Sans", 9)).pack(anchor="w", pady=(6, 0))
         self.height_bar = tk.Canvas(left, width=self.W, height=18, bg="#0f141b", highlightthickness=0)
         self.height_bar.pack(pady=(6, 0))
@@ -170,8 +183,13 @@ class Console:
         c.bind("<Button-4>", lambda e: self.lift(+0.02))
         c.bind("<Button-5>", lambda e: self.lift(-0.02))
         c.bind("<MouseWheel>", lambda e: self.lift(0.02 if e.delta > 0 else -0.02))
+        self.reset_btn = tk.Button(right, text="Reset cell after FAULT  (X)", command=self.node.reset_cell,
+                                   bg="#2c3542", fg="#e6ebf2", activebackground="#3f4a5a", activeforeground="#ffffff",
+                                   relief="flat", padx=10, pady=4, font=("DejaVu Sans", 10, "bold"))
+        self.reset_btn.pack(anchor="w", pady=(10, 0))
         self.root.bind("<Key>", self.on_key)
-        self.root.after(50, self.redraw)
+        self._last = {}
+        self.root.after(100, self.redraw)
 
     # ---- input --------------------------------------------------------------
     def on_motion(self, e):
@@ -217,6 +235,8 @@ class Console:
                 self.state["trigger"] = not self.state["trigger"]
             elif k == "f":
                 self.state["weld"] = not self.state.get("weld", False)
+            elif k == "x":
+                self.root.after(1, self.node.reset_cell)
             elif k == "r":
                 self.state["hand"][:] = [0.28, 0.78, -0.30]
                 self.state["head_pitch"] = 6.0
@@ -256,23 +276,27 @@ class Console:
         hb.create_rectangle(0, 4, self.W, 14, outline="#1f2a36")
         hb.create_rectangle(0, 4, frac * self.W, 14, fill="#6fa0ff", outline="")
         hb.create_text(4, 9, text=f"hand height {hand[1]:.2f} m   (shoulder 1.09)", anchor="w", fill="#e6ebf2", font=("DejaVu Sans", 8))
-        # HUD
+        # HUD (only reconfigure what changed: Tk reconfigures are expensive and steal time from publishing)
+        def setif(widget, key, **kw):
+            if self._last.get(key) != kw:
+                self._last[key] = kw
+                widget.configure(**kw)
         level = prompt.level if prompt is not None else 0
         fg, bg = LEVEL_COLORS.get(level, LEVEL_COLORS[0])
-        for w in (self.prompt_box, self.prompt_title, self.prompt_text, self.prompt_score):
-            w.configure(bg=bg)
-        self.prompt_title.configure(fg=fg, text=(prompt.title if prompt is not None else "waiting for RULA"))
-        self.prompt_text.configure(text=(prompt.text if prompt is not None else ""))
+        for i, w in enumerate((self.prompt_box, self.prompt_text, self.prompt_score)):
+            setif(w, f"bg{i}", bg=bg)
+        setif(self.prompt_title, "title", bg=bg, fg=fg, text=(prompt.title if prompt is not None else "waiting for RULA"))
+        setif(self.prompt_text, "ptext", text=(prompt.text if prompt is not None else ""))
         if rula is not None and rula.valid:
-            self.prompt_score.configure(text=f"RULA {rula.score}  (action level {rula.action_level})   upper arm {rula.upper_arm_flexion_deg:.0f}°  neck {rula.neck_flexion_deg:.0f}°  wrist {rula.wrist_flexion_deg:.0f}°")
+            setif(self.prompt_score, "score", text=f"RULA {rula.score}  (action level {rula.action_level})   upper arm {rula.upper_arm_flexion_deg:.0f}°  neck {rula.neck_flexion_deg:.0f}°  wrist {rula.wrist_flexion_deg:.0f}°")
         if auth is not None:
             st = STATE_NAMES.get(auth.state, "?")
             col = {"ENABLED": "#6fdc8c", "READY": "#e6ebf2", "FAULT": "#ff5a3c", "EMERGENCY STOP": "#ff5a3c"}.get(st, "#e8944a")
-            self.auth.configure(text=f"cell: {st}   mode {['STANDBY', 'MOVE', 'WELD'][auth.process_mode] if auth.process_mode < 3 else '?'}", fg=col)
-            self.auth_reason.configure(text=auth.reason)
-        self.stats.configure(text=f"moves executed {moves:5d}   rejected {rejected:4d}")
-        self.hand_lbl.configure(text=f"hand xr  x {hand[0]:+.2f}  y {hand[1]:.2f}  z {hand[2]:+.2f}\nhead pitch {head_pitch:+.0f}°")
-        self.root.after(50, self.redraw)
+            setif(self.auth, "auth", text=f"cell: {st}   mode {['STANDBY', 'MOVE', 'WELD'][auth.process_mode] if auth.process_mode < 3 else '?'}", fg=col)
+            setif(self.auth_reason, "reason", text=auth.reason + ("   → press X or the button to reset" if st in ("FAULT", "SAFE STOP") else ""))
+        setif(self.stats, "stats", text=f"moves executed {moves:5d}   rejected {rejected:4d}")
+        setif(self.hand_lbl, "hand", text=f"hand xr  x {hand[0]:+.2f}  y {hand[1]:.2f}  z {hand[2]:+.2f}\nhead pitch {head_pitch:+.0f}°")
+        self.root.after(100, self.redraw)
 
     def run(self):
         self.root.mainloop()
