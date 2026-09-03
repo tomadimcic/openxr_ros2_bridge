@@ -14,6 +14,11 @@ Output:
   ~/twist   geometry_msgs/TwistStamped  hand velocity in the same frame, clamped
   ~/enable  std_msgs/Bool               hold-to-run, false on input timeout
   ~/weld    std_msgs/Bool               arc-on request from the controller's primary button
+  ~/tracking/<name>  geometry_msgs/PoseStamped   every tracked point (head, hands, trackers) in the
+                                        REP-103 frame, unsmoothed, for body tracking / ergonomics
+
+This node is the only place where OpenXR data enters ROS 2. Everything downstream, robot
+teleoperation and ergonomics alike, consumes its outputs.
 
 header.stamp of every output carries the *acquisition* time of the OpenXR sample so
 downstream nodes can measure the true motion-to-command latency.
@@ -96,6 +101,7 @@ class OpenXRBridge(Node):
         self.declare_parameter("input_timeout_s", 0.2)
         self.declare_parameter("velocity_window", 3)         # samples for finite difference
         self.declare_parameter("weld_button", 0)             # Joy buttons[] index of the arc-on control
+        self.declare_parameter("tracked_points", ["head", "right_hand", "left_hand", "trackers/right_elbow", "trackers/chest"])
 
         p = self.get_parameter
         hand = str(p("hand").value)
@@ -117,6 +123,12 @@ class OpenXRBridge(Node):
         self.pub_enable = self.create_publisher(Bool, "~/enable", 10)
         self.pub_weld = self.create_publisher(Bool, "~/weld", 10)
         self.weld = False
+        # all tracked points, converted to the ROS frame, republished for body tracking
+        self.pub_track = {}
+        for name in p("tracked_points").value:
+            short = name.split("/")[-1]
+            self.pub_track[short] = self.create_publisher(PoseStamped, f"~/tracking/{short}", qos)
+            self.create_subscription(PoseStamped, f"/openxr/{name}/pose", lambda m, k=short: self.on_tracked(k, m), qos)
 
         self.trigger = 0.0
         self.enabled = False
@@ -136,6 +148,17 @@ class OpenXRBridge(Node):
             self.weld = weld
             self.get_logger().info(f"arc {'ON' if weld else 'off'} requested")
         self.pub_weld.publish(Bool(data=weld))
+
+    def on_tracked(self, key, msg: PoseStamped):
+        p = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+        q = (msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
+        p_ros, q_ros = xr_to_ros_pose(p, q)
+        out = PoseStamped()
+        out.header.stamp = msg.header.stamp
+        out.header.frame_id = self.out_frame
+        out.pose.position.x, out.pose.position.y, out.pose.position.z = p_ros
+        out.pose.orientation.x, out.pose.orientation.y, out.pose.orientation.z, out.pose.orientation.w = q_ros
+        self.pub_track[key].publish(out)
 
     def on_pose(self, msg: PoseStamped):
         self.last_rx = self.get_clock().now()

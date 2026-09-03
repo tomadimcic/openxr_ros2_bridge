@@ -17,6 +17,10 @@ License: Apache-2.0.
 | out | `~/pose` | `geometry_msgs/PoseStamped` | smoothed pose in `output_frame`, REP-103 (X fwd, Y left, Z up) |
 | out | `~/twist` | `geometry_msgs/TwistStamped` | finite-difference velocity, clamped |
 | out | `~/enable` | `std_msgs/Bool` | hold-to-run; forced false on input timeout |
+| out | `~/weld` | `std_msgs/Bool` | arc-on request from the controller's primary button |
+| out | `~/tracking/<name>` | `geometry_msgs/PoseStamped` | every tracked point (head, hands, trackers) in the REP-103 frame, for body tracking |
+
+The bridge is the **only** node that reads OpenXR data. Robot teleoperation and ergonomics both consume its outputs.
 
 `header.stamp` of the outputs is the *acquisition* time of the OpenXR sample, so
 downstream nodes can measure true motion-to-command latency.
