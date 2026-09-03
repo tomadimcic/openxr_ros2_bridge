@@ -139,10 +139,12 @@ class OpenXRSim(Node):
         return math.sin(k * 12.9898 + salt * 78.233) * 0.5
 
     # ---- scenario -----------------------------------------------------------
-    def scenario(self, t, high=False):
+    def scenario(self, t, high=False, reverse=False):
         """(hand position, trigger, phase, weld progress 0..1) for scenario time t (seconds)."""
         rest = (0.28, 0.78, -0.30)          # hand resting on the thigh/armrest
-        start = (0.05, 1.28, -0.50) if high else (0.05, 0.82, -0.42)   # high seam: hand above the shoulder
+        start = (0.05, 1.22, -0.50) if high else (0.05, 0.82, -0.42)   # high seam: hand above the shoulder
+        if reverse:                          # weld the seam back the other way: the torch returns
+            start = (start[0] + self.seam, start[1], start[2])
         if t < self.t_idle:
             return rest, 0.0, "idle", 0.0
         t -= self.t_idle
@@ -150,12 +152,13 @@ class OpenXRSim(Node):
             s = 0.5 - 0.5 * math.cos(math.pi * t / self.t_approach)
             return v_add(rest, v_scale(v_sub(start, rest), s)), 0.0, "approach", 0.0
         t -= self.t_approach
+        direction = -1.0 if reverse else 1.0
         if t < self.t_weld:
             prog = t / self.t_weld
             weave = self.weave * math.sin(2 * math.pi * self.weave_hz * t)
-            return (start[0] + self.seam * prog, start[1], start[2] + weave), 1.0, "weld", prog
+            return (start[0] + direction * self.seam * prog, start[1], start[2] + weave), 1.0, "weld", prog
         t -= self.t_weld
-        end = (start[0] + self.seam, start[1], start[2])
+        end = (start[0] + direction * self.seam, start[1], start[2])
         s = min(t / self.t_release, 1.0)
         return v_add(end, v_scale(v_sub(rest, end), s)), 0.0, "release", 1.0
 
@@ -220,7 +223,7 @@ class OpenXRSim(Node):
         t = ts % self.t_cycle if self.loop else min(ts, self.t_cycle - 1e-3)
         cycle = int(ts // self.t_cycle)
         high = self.alternate and cycle % 2 == 1
-        hand, trigger, phase, prog = self.scenario(t, high)
+        hand, trigger, phase, prog = self.scenario(t, high, reverse=(cycle % 2 == 1))
         hand = v_add(hand, tuple(self.jitter * self._noise(k, i) for i in range(3)))
         elbow = self.elbow_from(hand)
 
