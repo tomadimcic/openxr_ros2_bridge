@@ -100,6 +100,7 @@ class ConsoleNode(Node):
         with self.lock:
             hand = tuple(self.state["hand"])
             trigger = 1.0 if self.state["trigger"] else 0.0
+            weld = 1 if self.state.get("weld") else 0
             head_pitch = self.state["head_pitch"]
         now = self.get_clock().now().to_msg()
 
@@ -117,7 +118,7 @@ class ConsoleNode(Node):
         pose(self.pub_head, (0.0, self.eye_h, 0.0), q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, math.radians(-head_pitch))))
         j = Joy()
         j.header.stamp, j.header.frame_id = now, self.frame
-        j.axes, j.buttons = [trigger, 0.0], [0, 0, 0]
+        j.axes, j.buttons = [trigger, 0.0], [weld, 0, 0]
         self.pub_inputs.publish(j)
 
 
@@ -135,7 +136,7 @@ class Console:
         self.canvas = tk.Canvas(left, width=self.W, height=self.H, bg="#0f141b", highlightthickness=0, cursor="crosshair")
         self.canvas.pack()
         tk.Label(left, text="mouse: move hand   wheel: lift/lower   HOLD LEFT BUTTON: trigger (robot moves)\n"
-                            "arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger   R: reset",
+                            "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger   R: reset",
                  fg="#98a3b3", bg="#1b2430", justify="left", font=("DejaVu Sans", 9)).pack(anchor="w", pady=(6, 0))
         self.height_bar = tk.Canvas(left, width=self.W, height=18, bg="#0f141b", highlightthickness=0)
         self.height_bar.pack(pady=(6, 0))
@@ -165,6 +166,7 @@ class Console:
         c.bind("<Motion>", self.on_motion)
         c.bind("<ButtonPress-1>", lambda e: self.set_trigger(True))
         c.bind("<ButtonRelease-1>", lambda e: self.set_trigger(False))
+        c.bind("<ButtonPress-3>", lambda e: self.toggle_weld())
         c.bind("<Button-4>", lambda e: self.lift(+0.02))
         c.bind("<Button-5>", lambda e: self.lift(-0.02))
         c.bind("<MouseWheel>", lambda e: self.lift(0.02 if e.delta > 0 else -0.02))
@@ -182,6 +184,10 @@ class Console:
     def lift(self, dy):
         with self.lock:
             self.state["hand"][1] = max(Y_RANGE[0], min(Y_RANGE[1], self.state["hand"][1] + dy))
+
+    def toggle_weld(self):
+        with self.lock:
+            self.state["weld"] = not self.state.get("weld", False)
 
     def set_trigger(self, on):
         with self.lock:
@@ -209,6 +215,8 @@ class Console:
                 self.state["head_pitch"] = min(45.0, self.state["head_pitch"] + 5.0)
             elif k == "space":
                 self.state["trigger"] = not self.state["trigger"]
+            elif k == "f":
+                self.state["weld"] = not self.state.get("weld", False)
             elif k == "r":
                 self.state["hand"][:] = [0.28, 0.78, -0.30]
                 self.state["head_pitch"] = 6.0
@@ -241,7 +249,7 @@ class Console:
         c.create_oval(px - r, py - r, px + r, py + r, outline=color, width=3)
         c.create_line(px - r - 6, py, px + r + 6, py, fill=color)
         c.create_line(px, py - r - 6, px, py + r + 6, fill=color)
-        c.create_text(px, py + r + 14, text=("TRIGGER: robot follows" if trig else "trigger released"), fill=color, font=("DejaVu Sans", 9, "bold"))
+        c.create_text(px, py + r + 14, text=("TRIGGER: robot follows" if trig else "trigger released") + ("   ARC ON" if self.state.get("weld") else ""), fill=color, font=("DejaVu Sans", 9, "bold"))
         hb = self.height_bar
         hb.delete("all")
         frac = (hand[1] - Y_RANGE[0]) / (Y_RANGE[1] - Y_RANGE[0])

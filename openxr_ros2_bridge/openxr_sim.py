@@ -88,6 +88,7 @@ class OpenXRSim(Node):
         self.declare_parameter("dropout_at_s", -1.0)
         self.declare_parameter("dropout_duration_s", 1.0)
         self.declare_parameter("loop", True)
+        self.declare_parameter("alternate_high_reach", True)   # every other pass is a high, awkward seam (RULA >= 5)
         # seated welder geometry (stage frame, metres): chair 0.45 m, right shoulder, arm lengths
         self.declare_parameter("shoulder_xr", [0.19, 1.09, 0.0])   # chair 0.45 + shoulder 0.64 above the pelvis
         self.declare_parameter("upper_arm_m", 0.373)              # human_description, height 1.75 m
@@ -110,6 +111,7 @@ class OpenXRSim(Node):
         self.dropout_at = float(p("dropout_at_s").value)
         self.dropout_len = float(p("dropout_duration_s").value)
         self.loop = bool(p("loop").value)
+        self.alternate = bool(p("alternate_high_reach").value)
         self.shoulder = tuple(float(v) for v in p("shoulder_xr").value)
         self.l_upper = float(p("upper_arm_m").value)
         self.l_fore = float(p("forearm_m").value)
@@ -137,10 +139,10 @@ class OpenXRSim(Node):
         return math.sin(k * 12.9898 + salt * 78.233) * 0.5
 
     # ---- scenario -----------------------------------------------------------
-    def scenario(self, t):
+    def scenario(self, t, high=False):
         """(hand position, trigger, phase, weld progress 0..1) for scenario time t (seconds)."""
         rest = (0.28, 0.78, -0.30)          # hand resting on the thigh/armrest
-        start = (0.05, 0.82, -0.42)         # seam start, in front of the seated welder
+        start = (0.05, 1.28, -0.50) if high else (0.05, 0.82, -0.42)   # high seam: hand above the shoulder
         if t < self.t_idle:
             return rest, 0.0, "idle", 0.0
         t -= self.t_idle
@@ -216,7 +218,9 @@ class OpenXRSim(Node):
             return
         ts = t_abs * self.tscale
         t = ts % self.t_cycle if self.loop else min(ts, self.t_cycle - 1e-3)
-        hand, trigger, phase, prog = self.scenario(t)
+        cycle = int(ts // self.t_cycle)
+        high = self.alternate and cycle % 2 == 1
+        hand, trigger, phase, prog = self.scenario(t, high)
         hand = v_add(hand, tuple(self.jitter * self._noise(k, i) for i in range(3)))
         elbow = self.elbow_from(hand)
 
@@ -238,12 +242,14 @@ class OpenXRSim(Node):
         pose("lhand", (-0.25, 0.78, -0.28), (0.0, 0.0, 0.0, 1.0))
         pose("relbow", elbow, q_hand)
         # chest: leans forward a little while welding (trunk flexion ~8 deg)
-        lean = math.radians(-8.0) * (1.0 if phase == "weld" else 0.3)
+        lean_deg = (25.0 if high else 8.0) if phase == "weld" else 3.0   # reaching up and forward bends the trunk
+        lean = math.radians(-lean_deg)
         pose("chest", (0.0, 0.92, 0.02), q_axis(1, 0, 0, lean))
         # head: in VR the welder looks at the rendered stereo view, roughly straight ahead; while welding
         # they tend to crane forward and down (8 -> 25 deg over the seam), which the RULA node must flag.
         eye = (0.0, self.eye_h, 0.0)
-        pitch = math.radians(-(8.0 + 17.0 * prog)) if phase == "weld" else math.radians(-6.0)
+        crane = 32.0 if high else 17.0                        # the high seam makes the welder crane more
+        pitch = math.radians(-(8.0 + crane * prog)) if phase == "weld" else math.radians(-6.0)
         yaw = math.radians(-12.0 * (hand[0] / 0.3))          # follows the hand a little
         pose("head", eye, q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, pitch)))
 
@@ -251,11 +257,11 @@ class OpenXRSim(Node):
         j.header.stamp = now
         j.header.frame_id = self.frame
         j.axes = [trigger, 0.0]
-        j.buttons = [0, 0, 0]
+        j.buttons = [1 if phase == "weld" else 0, 0, 0]      # buttons[0] = arc on (WELD process mode)
         self.pub_inputs.publish(j)
 
         if k % int(self.rate * 5) == 0:
-            self.get_logger().info(f"t={t_abs:6.1f}s phase={phase:8s} trigger={trigger:.0f} "
+            self.get_logger().info(f"t={t_abs:6.1f}s {'HIGH ' if high else ''}phase={phase:8s} trigger={trigger:.0f} "
                                    f"hand_xr=({hand[0]:.3f},{hand[1]:.3f},{hand[2]:.3f}) seam {prog*100:3.0f}%")
 
 

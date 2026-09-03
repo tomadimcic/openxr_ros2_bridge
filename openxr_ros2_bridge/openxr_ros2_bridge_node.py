@@ -13,6 +13,7 @@ Output:
   ~/pose    geometry_msgs/PoseStamped   smoothed hand pose in a REP-103 frame (X fwd, Y left, Z up)
   ~/twist   geometry_msgs/TwistStamped  hand velocity in the same frame, clamped
   ~/enable  std_msgs/Bool               hold-to-run, false on input timeout
+  ~/weld    std_msgs/Bool               arc-on request from the controller's primary button
 
 header.stamp of every output carries the *acquisition* time of the OpenXR sample so
 downstream nodes can measure the true motion-to-command latency.
@@ -94,6 +95,7 @@ class OpenXRBridge(Node):
         self.declare_parameter("trigger_threshold", 0.5)
         self.declare_parameter("input_timeout_s", 0.2)
         self.declare_parameter("velocity_window", 3)         # samples for finite difference
+        self.declare_parameter("weld_button", 0)             # Joy buttons[] index of the arc-on control
 
         p = self.get_parameter
         hand = str(p("hand").value)
@@ -104,6 +106,7 @@ class OpenXRBridge(Node):
         self.trig_thr = float(p("trigger_threshold").value)
         self.timeout = float(p("input_timeout_s").value)
         self.win = max(int(p("velocity_window").value), 1)
+        self.weld_btn = int(p("weld_button").value)
 
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -112,6 +115,8 @@ class OpenXRBridge(Node):
         self.pub_pose = self.create_publisher(PoseStamped, "~/pose", qos)
         self.pub_twist = self.create_publisher(TwistStamped, "~/twist", qos)
         self.pub_enable = self.create_publisher(Bool, "~/enable", 10)
+        self.pub_weld = self.create_publisher(Bool, "~/weld", 10)
+        self.weld = False
 
         self.trigger = 0.0
         self.enabled = False
@@ -126,6 +131,11 @@ class OpenXRBridge(Node):
 
     def on_inputs(self, msg: Joy):
         self.trigger = float(msg.axes[0]) if msg.axes else 0.0
+        weld = bool(msg.buttons[self.weld_btn]) if len(msg.buttons) > self.weld_btn else False
+        if weld != self.weld:
+            self.weld = weld
+            self.get_logger().info(f"arc {'ON' if weld else 'off'} requested")
+        self.pub_weld.publish(Bool(data=weld))
 
     def on_pose(self, msg: PoseStamped):
         self.last_rx = self.get_clock().now()
