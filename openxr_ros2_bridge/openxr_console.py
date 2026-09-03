@@ -108,6 +108,7 @@ class ConsoleNode(Node):
                 self.state["moves"] = self.state.get("moves", 0) + 1
             elif not m.accepted:
                 self.state["rejected"] = self.state.get("rejected", 0) + 1
+                self.state["last_reject"] = (m.reason, self.get_clock().now().nanoseconds * 1e-9)
 
     def publish(self):
         with self.lock:
@@ -172,6 +173,8 @@ class Console:
         self.auth_reason.pack(fill="x")
         self.stats = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10), anchor="w", justify="left")
         self.stats.pack(fill="x", pady=(8, 0))
+        self.why = tk.Label(right, text="", fg="#e8944a", bg="#1b2430", font=("DejaVu Sans", 10), anchor="w", justify="left", wraplength=340)
+        self.why.pack(fill="x", pady=(4, 0))
         self.hand_lbl = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10), anchor="w", justify="left")
         self.hand_lbl.pack(fill="x", pady=(8, 0))
 
@@ -250,6 +253,7 @@ class Console:
             head_pitch = self.state["head_pitch"]
             prompt, rula, auth = self.state.get("prompt"), self.state.get("rula"), self.state.get("auth")
             moves, rejected = self.state.get("moves", 0), self.state.get("rejected", 0)
+            last_reject = self.state.get("last_reject")
         c = self.canvas
         c.delete("all")
         for i in range(1, 7):
