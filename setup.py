@@ -26,7 +26,8 @@ setup(
     entry_points={
         'console_scripts': [
             'openxr_ros2_bridge_node = openxr_ros2_bridge.openxr_ros2_bridge_node:main',
-            'openxr_sim = openxr_ros2_bridge.openxr_sim:main'
+            'openxr_sim = openxr_ros2_bridge.openxr_sim:main',
+            'openxr_console = openxr_ros2_bridge.openxr_console:main'
         ],
     },
 )

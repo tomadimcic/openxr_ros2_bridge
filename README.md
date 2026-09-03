@@ -28,6 +28,15 @@ Parameters: `hand` (right_hand), `output_frame` (operator_base), `smoothing_alph
 Frame conversion: `x_ros = −z_xr`, `y_ros = −x_xr`, `z_ros = y_xr`; orientations by the
 same change of basis (`R·M·Rᵀ`).
 
+### `openxr_console`
+
+Interactive stand-in until the headset arrives, plus a preview of the VR overlay. A Tk window:
+the mouse moves the torch hand over a top view of the reach, the wheel lifts it, **holding the
+left mouse button is the trigger** (hold-to-run, the robot follows only while held); arrows / W S
+move, Q E tilt the head, SPACE toggles the trigger, R resets. The right pane shows the ergonomic
+prompt from `/human/ergo_prompt` (info / attention / warning), the RULA score and the cell's
+motion authority. Publishes the same topics as a headset client.
+
 ### `openxr_sim`
 
 Deterministic stand-in for a headset client: publishes head and both hands at 90 Hz
