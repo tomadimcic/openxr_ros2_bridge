@@ -132,6 +132,8 @@ class OpenXRBridge(Node):
 
         self.trigger = 0.0
         self.enabled = False
+        self.rearm_needed = False   # set by the watchdog: the trigger must be released and pressed again
+        self._rearm_warned = False
         self.sp = None          # smoothed position (ros frame)
         self.sq = None          # smoothed orientation
         self.history = []       # (t, position, orientation) of smoothed samples
@@ -214,7 +216,14 @@ class OpenXRBridge(Node):
                         sign * rx / s * w, sign * ry / s * w, sign * rz / s * w)
         self.pub_twist.publish(tw)
 
-        enable = self.trigger >= self.trig_thr
+        if self.trigger < self.trig_thr and self.rearm_needed:
+            self.rearm_needed = False
+            self._rearm_warned = False
+            self.get_logger().info("trigger released: re-engagement gesture accepted")
+        if self.trigger >= self.trig_thr and self.rearm_needed and not self._rearm_warned:
+            self._rearm_warned = True
+            self.get_logger().warn("tracking is back but hold-to-run stays released: release and press the trigger to re-engage")
+        enable = self.trigger >= self.trig_thr and not self.rearm_needed
         if enable != self.enabled:
             self.enabled = enable
             self.get_logger().info(f"hold-to-run {'ENGAGED' if enable else 'released'}")
@@ -226,8 +235,9 @@ class OpenXRBridge(Node):
         age = (self.get_clock().now() - self.last_rx).nanoseconds * 1e-9
         if age > self.timeout and self.enabled:
             self.enabled = False
+            self.rearm_needed = True        # motion must not resume by itself when tracking returns
             self.pub_enable.publish(Bool(data=False))
-            self.get_logger().warn(f"OpenXR input timeout ({age*1000:.0f} ms): hold-to-run released")
+            self.get_logger().warn(f"OpenXR input timeout ({age*1000:.0f} ms): hold-to-run released, re-engagement required")
 
 
 def main(args=None):

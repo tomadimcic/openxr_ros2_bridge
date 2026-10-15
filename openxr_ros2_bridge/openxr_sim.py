@@ -87,6 +87,7 @@ class OpenXRSim(Node):
         self.declare_parameter("release_s", 2.0)
         self.declare_parameter("dropout_at_s", -1.0)
         self.declare_parameter("dropout_duration_s", 1.0)
+        self.declare_parameter("reengage_s", 0.8)     # after a dropout the scripted welder releases the trigger for this long
         self.declare_parameter("loop", True)
         self.declare_parameter("alternate_high_reach", True)   # every other pass is a high, awkward seam (RULA >= 5)
         # seated welder geometry (stage frame, metres): chair 0.45 m, right shoulder, arm lengths
@@ -110,6 +111,7 @@ class OpenXRSim(Node):
         self.t_release = float(p("release_s").value)
         self.dropout_at = float(p("dropout_at_s").value)
         self.dropout_len = float(p("dropout_duration_s").value)
+        self.reengage = float(p("reengage_s").value)
         self.loop = bool(p("loop").value)
         self.alternate = bool(p("alternate_high_reach").value)
         self.shoulder = tuple(float(v) for v in p("shoulder_xr").value)
@@ -224,6 +226,10 @@ class OpenXRSim(Node):
         cycle = int(ts // self.t_cycle)
         high = self.alternate and cycle % 2 == 1
         hand, trigger, phase, prog = self.scenario(t, high, reverse=(cycle % 2 == 1))
+        if self.dropout_at >= 0 and self.dropout_at + self.dropout_len <= t_abs < self.dropout_at + self.dropout_len + self.reengage:
+            if abs(t_abs - (self.dropout_at + self.dropout_len)) < 1.0 / self.rate:
+                self.get_logger().info(f"tracking back: releasing the trigger for {self.reengage:.1f} s (re-engagement gesture)")
+            trigger = 0.0
         hand = v_add(hand, tuple(self.jitter * self._noise(k, i) for i in range(3)))
         elbow = self.elbow_from(hand)
 
