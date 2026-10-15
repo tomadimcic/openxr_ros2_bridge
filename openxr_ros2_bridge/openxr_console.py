@@ -66,6 +66,8 @@ class ConsoleNode(Node):
         self.declare_parameter("upper_arm_m", 0.373)
         self.declare_parameter("forearm_m", 0.233)
         self.declare_parameter("eye_height_m", 1.22)
+        self.declare_parameter("spectator", False)     # true: show the HUD only, publish nothing (another input drives)
+        self.declare_parameter("geometry", "")          # Tk geometry, e.g. "+1900+0", for scripted window placement
         p = self.get_parameter
         self.state, self.lock = state, lock
         self.frame = str(p("frame_id").value)
@@ -85,7 +87,10 @@ class ConsoleNode(Node):
         if MotionAuthority is not None:
             self.create_subscription(MotionAuthority, "/telecraft/authority", lambda m: self.store("auth", m), latched)
             self.create_subscription(CommandAck, "/telecraft/ack", self.on_ack, 50)
-        self.create_timer(1.0 / float(p("rate_hz").value), self.publish)
+        self.spectator = bool(p("spectator").value)
+        self.geometry = str(p("geometry").value)
+        if not self.spectator:
+            self.create_timer(1.0 / float(p("rate_hz").value), self.publish)
         if Trigger is not None:
             self.cli_reset = self.create_client(Trigger, "/safety_gate/reset")
             self.cli_ready = self.create_client(SetBool, "/safety_gate/set_ready")
@@ -140,8 +145,10 @@ class Console:
     def __init__(self, node, state, lock):
         self.node, self.state, self.lock = node, state, lock
         self.root = tk.Tk()
-        self.root.title("Tele-Craft operator console  (OpenXR stand-in + VR overlay preview)")
+        self.root.title("Tele-Craft operator console  (VR overlay preview, spectator)" if node.spectator else "Tele-Craft operator console  (OpenXR stand-in + VR overlay preview)")
         self.root.configure(bg="#1b2430")
+        if node.geometry:
+            self.root.geometry(node.geometry)
         left = tk.Frame(self.root, bg="#1b2430")
         left.grid(row=0, column=0, padx=12, pady=12)
         tk.Label(left, text="TORCH HAND  ·  top view of your reach", fg="#98a3b3", bg="#1b2430",

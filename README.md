@@ -39,7 +39,8 @@ the mouse moves the torch hand over a top view of the reach, the wheel lifts it,
 left mouse button is the trigger** (hold-to-run, the robot follows only while held); arrows / W S
 move, Q E tilt the head, SPACE toggles the trigger, R resets. The right pane shows the ergonomic
 prompt from `/human/ergo_prompt` (info / attention / warning), the RULA score and the cell's
-motion authority. Publishes the same topics as a headset client.
+motion authority. Publishes the same topics as a headset client. With `spectator:=true` it shows the
+HUD only and publishes nothing, for use next to another input; `geometry` (e.g. `+1900+0`) places the window.
 
 ### `openxr_sim`
 
