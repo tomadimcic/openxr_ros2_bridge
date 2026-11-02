@@ -17,22 +17,38 @@ jobs:
           required-ros-distributions: jazzy
       - uses: actions/checkout@v4
         with:
-          path: deps_check
-      - name: Install the dependencies with rosdep, stopping at any failed install
-        # action-ros-ci runs rosdep with -r (continue past errors): a failed download then surfaced only as
-        # "No module named 'ament_copyright'" in every test (2 Nov 2026). Here a failure stops the job at this step.
+          path: ros_ws/src/openxr_ros2_bridge
+      # Plain steps instead of ros-tooling/action-ros-ci: on 2 Nov 2026 runs failed inside the action with a corrupted
+      # environment (HOME with an input variable appended; ament modules not found) while the same commits had passed
+      # earlier. A failing step shows its last lines as annotations, readable without access to the job log.
+      - name: Dependencies (rosdep)
         shell: bash
         run: |
-          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
           source /opt/ros/jazzy/setup.bash
-          sudo apt-get update
-          rosdep update --rosdistro jazzy
-          rosdep install --from-paths deps_check --ignore-src -y --rosdistro jazzy
-          rm -rf deps_check
-      - uses: ros-tooling/action-ros-ci@v0.4
-        with:
-          package-name: openxr_ros2_bridge
-          target-ros2-distro: jazzy
+          set +e
+          { sudo apt-get update && rosdep update --rosdistro jazzy \
+            && rosdep install --from-paths ros_ws/src --ignore-src -y --rosdistro jazzy; } > deps.log 2>&1
+          rc=$?
+          [ $rc -eq 0 ] || tail -n 15 deps.log | sed 's/%/%25/g; s/^/::error title=dependencies::/'
+          exit $rc
+      - name: Build
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd ros_ws
+          set +e
+          colcon build --event-handlers console_direct+ > build.log 2>&1
+          rc=$?
+          [ $rc -eq 0 ] || tail -n 20 build.log | sed 's/%/%25/g; s/^/::error title=build::/'
+          exit $rc
+      - name: Test
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source ros_ws/install/setup.bash
+          cd ros_ws
+          colcon test --event-handlers console_direct+ --return-code-on-test-failure
       - name: Test report
         if: always()
         uses: mikepenz/action-junit-report@v4
