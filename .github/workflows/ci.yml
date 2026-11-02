@@ -62,7 +62,8 @@ jobs:
         shell: python3 {0}
         run: |
           import glob, sys, xml.etree.ElementTree as ET
-          required = "test_engaged_through_delay_jitter_and_loss_released_on_outage test_mypy test_picture_age_reaches_ros_only_from_the_camera_app test_flake8".split()
+          required = ("test_engaged_through_delay_jitter_and_loss_released_on_outage test_mypy test_flake8 "
+                      "test_picture_age_reaches_ros_only_from_the_camera_app test_launch_scripted_welder").split()
           cases = {}
           for f in glob.glob("ros_ws/build/openxr_ros2_bridge/**/*.xml", recursive=True):
               for tc in ET.parse(f).iter("testcase"):
