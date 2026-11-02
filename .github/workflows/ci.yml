@@ -1,9 +1,13 @@
-# Build and test on ROS 2 Jazzy (the ARISE reference distribution): ament linters (flake8, pep257, copyright,
-# xmllint, mypy), unit and functional tests, and the tc/netem network resilience test (the runner has sudo).
+# Build and test on ROS 2 Jazzy (the ARISE reference distribution): ament linters, unit and functional tests.
+# The test report (a check run with every test case) and the required-tests step make the results readable without
+# the job log; the required tests must have run and passed, not been skipped.
 name: CI
 on:
   push:
   pull_request:
+permissions:
+  contents: read
+  checks: write
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
@@ -15,6 +19,29 @@ jobs:
         with:
           package-name: openxr_ros2_bridge
           target-ros2-distro: jazzy
+      - name: Test report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: ros_ws/build/openxr_ros2_bridge/**/*.xml
+          check_name: Tests on ROS 2 Jazzy
+          include_passed: true
+          detailed_summary: true
+      - name: Required tests ran and passed
+        if: always()
+        shell: python3 {0}
+        run: |
+          import glob, sys, xml.etree.ElementTree as ET
+          required = "test_engaged_through_delay_jitter_and_loss_released_on_outage test_mypy test_picture_age_reaches_ros_only_from_the_camera_app test_flake8".split()
+          cases = {}
+          for f in glob.glob("ros_ws/build/openxr_ros2_bridge/**/*.xml", recursive=True):
+              for tc in ET.parse(f).iter("testcase"):
+                  bad = tc.find("failure") is not None or tc.find("error") is not None
+                  cases[tc.get("name")] = "skipped" if tc.find("skipped") is not None else ("failed" if bad else "passed")
+          print(f"{len(cases)} test cases: " + ", ".join(f"{k}={v}" for k, v in sorted(cases.items())))
+          missing = [n for n in required if cases.get(n) != "passed"]
+          if missing:
+              sys.exit(f"required tests not passed: {missing}")
       - uses: actions/upload-artifact@v4
         if: always()
         with:

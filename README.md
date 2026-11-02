@@ -72,6 +72,7 @@ ros2 topic echo /openxr_ros2_bridge/twist
 | `test_flake8`, `test_pep257`, `test_copyright`, `test_xmllint`, `test_mypy` | ament linters; house style in `setup.cfg` (double quotes, lines up to 120 characters) |
 | `test_conversions` | OpenXR stage to REP-103: positions, orientations, quaternion round trip, nlerp |
 | `test_bridge_node` | hold-to-run: engages only with a fresh pose and a pressed trigger, released within the input timeout on a dropout, never resumes by itself, a stale trigger counts as released, twist speed clamp |
+| `test_gateway_video` | the camera app's picture age reaches `/openxr/video_age`; the twin app sends none |
 | `test_link_netem` | headset link through `openxr_udp_gateway` under tc/netem: engaged through 30 ms +- 10 ms delay and 2 % loss, released at 100 % loss and not resumed without the gesture (needs passwordless sudo, as on the CI runner) |
 
 `test/reply_port_check.py`, `test/tracker_boxes_check.py`, `test/headset_link_check.py` and

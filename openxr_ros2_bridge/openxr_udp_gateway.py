@@ -24,6 +24,8 @@ stay unchanged:
   out  /openxr/<hand>/inputs   sensor_msgs/Joy: axes [trigger, grip, stick x, stick y],
                                 buttons [arc request, a, b, menu, stick click]
   out  ~/status                                                            std_msgs/String (JSON link statistics, 1 Hz)
+  out  /openxr/video_age        std_msgs/Float32: age (s) of the camera picture on the headset's screen, from the camera
+                                app's datagrams (the safety gate removes motion authority when it is too old)
   in   /tf, /tf_static     robot links for the digital twin shown in the headset (twin_links, twin_hz)
   in   scene_topic         visualization_msgs/MarkerArray: CUBE markers (e.g. the workpiece and its seam) shown in the
                            headset next to the twin, resent every second
@@ -40,7 +42,8 @@ Protocol v1 (UTF-8 JSON, one object per datagram)
      "in":[{"id":"right_hand","trigger":0..1,"grip":0..1,"a":0|1,"b":0|1,"menu":0|1,
             "stick":[x,y],"stick_click":0|1}, ...],
      "sync":{"t1":..,"t2":..,"t3":..,"t4":..},            # echo of the last status, see clock below
-     "reply_port":P}                                      # optional: the port this app listens on
+     "reply_port":P,                                      # optional: the port this app listens on
+     "video":{"age_ms":A}}                                # optional, camera app: age of the picture it shows
   PC -> headset (to the sender's address, at the datagram's reply_port, else the parameter reply_port, default 9102;
   the camera app listens on any free port and names it, since the twin app, paused in the background, can hold 9102):
     {"v":1,"kind":"status","seq":N,"t1":<"t" of the last pose datagram>,"t2":<PC receive ns>,"t3":<PC send ns>,
@@ -113,7 +116,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time as RclTime
 from sensor_msgs.msg import Joy
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 import tf2_ros
 from visualization_msgs.msg import Marker, MarkerArray
@@ -252,6 +255,7 @@ class UdpGateway(Node):
         self.qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         self.pose_pubs, self.joy_pubs = {}, {}
         self.pub_status = self.create_publisher(String, "~/status", 10)
+        self.pub_video = self.create_publisher(Float32, "/openxr/video_age", 10)
 
         latched = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -340,6 +344,9 @@ class UdpGateway(Node):
 
     def on_datagram(self, msg, addr, t_rx):
         seq, t_h = int(msg["seq"]), int(msg["t"])
+        video = msg.get("video")
+        if isinstance(video, dict) and isinstance(video.get("age_ms"), (int, float)):
+            self.pub_video.publish(Float32(data=float(video["age_ms"]) / 1000.0))
         port = msg.get("reply_port", self.reply_port)
         if not isinstance(port, int) or not 0 < port < 65536:
             port = self.reply_port
