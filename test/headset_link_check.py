@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Live check of the headset link, run next to openxr_udp_gateway while the headset application is running.
 
 Every second it prints the rate of each /openxr pose topic, the data age (PC time now minus the header stamp, which
@@ -17,8 +28,8 @@ import json
 import statistics
 import time
 
-import rclpy
 from geometry_msgs.msg import PoseStamped
+import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Joy
@@ -33,6 +44,7 @@ def short(topic):
 
 
 class LinkCheck(Node):
+
     def __init__(self):
         super().__init__("headset_link_check")
         self.qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=10)
@@ -78,7 +90,8 @@ class LinkCheck(Node):
             age = f"{statistics.median(recent):5.1f}ms" if recent else "   -   "
             cols.append(f"{short(topic)} {self.count[topic]:3d} {age}")
             self.count[topic] = 0
-        trig = f"trigger {self.joy.axes[0]:.2f} arc {self.joy.buttons[0]}" if self.joy and self.joy.axes else "trigger -"
+        trig = (f"trigger {self.joy.axes[0]:.2f} arc {self.joy.buttons[0]}" if self.joy and self.joy.axes
+                else "trigger -")
         return head + " " + " | ".join(cols) + " | " + trig
 
     def summary(self, secs):
@@ -96,7 +109,8 @@ class LinkCheck(Node):
             m = self.last.get(topic)
             if m:
                 p = m.pose.position
-                print(f"  {short(topic):12s} xr ({p.x:+.3f} {p.y:+.3f} {p.z:+.3f})  ->  ros x {-p.z:+.3f}  y {-p.x:+.3f}  z {p.y:+.3f}")
+                print(f"  {short(topic):12s} xr ({p.x:+.3f} {p.y:+.3f} {p.z:+.3f})  ->  "
+                      f"ros x {-p.z:+.3f}  y {-p.x:+.3f}  z {p.y:+.3f}")
         if self.status:
             print("gateway status:", json.dumps(self.status))
 

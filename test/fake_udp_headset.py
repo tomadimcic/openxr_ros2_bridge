@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Fake standalone headset for testing openxr_udp_gateway without hardware.
 
 Sends protocol-v1 pose datagrams at 90 Hz like the Unity headset application: head, both controllers and two
@@ -26,11 +37,14 @@ def main():
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--rate", type=float, default=90.0)
     ap.add_argument("--clock-offset-s", type=float, default=-1234.5)
-    ap.add_argument("--drop-trackers-at", type=float, default=-1.0, help="mark the trackers untracked from this time on")
+    ap.add_argument("--drop-trackers-at", type=float, default=-1.0,
+                    help="mark the trackers untracked from this time on")
     args = ap.parse_args()
 
     off_ns = int(args.clock_offset_s * 1e9)
-    clock = lambda: time.monotonic_ns() + off_ns          # "headset" clock
+
+    def clock():                                          # "headset" clock
+        return time.monotonic_ns() + off_ns
 
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -54,7 +68,8 @@ def main():
                 sync = {"t1": st["t1"], "t2": st["t2"], "t3": st["t3"], "t4": t4}
             if time.monotonic() - last_print > 1.0:
                 last_print = time.monotonic()
-                print(f"status: link {st.get('link_hz')} Hz, offset {st.get('offset_ms')} ms, rtt {st.get('rtt_ms')} ms, "
+                print(f"status: link {st.get('link_hz')} Hz, offset {st.get('offset_ms')} ms, "
+                      f"rtt {st.get('rtt_ms')} ms, "
                       f"auth {st.get('auth_state')}/{st.get('auth_mode')}, prompt '{st.get('prompt_title')}', "
                       f"tracking {[d['id'] + ('+' if d['ok'] else '-') for d in st.get('tracking', [])]}")
         a = 2 * math.pi * 0.2 * t

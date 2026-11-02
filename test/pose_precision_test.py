@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Compare the precision of two tracked devices that are rigidly attached to each other.
 
 Typical use: a VIVE Ultimate Tracker taped to a VIVE Focus controller, both streamed by openxr_udp_gateway.
@@ -27,9 +38,9 @@ import argparse
 import csv
 import time
 
+from geometry_msgs.msg import PoseStamped
 import numpy as np
 import rclpy
-from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
@@ -46,6 +57,7 @@ def rot_angle_deg(m):
 
 
 class Recorder(Node):
+
     def __init__(self, topics):
         super().__init__("pose_precision_test")
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=50)
@@ -86,7 +98,8 @@ def analyse(a_name, b_name, A, B, hz=100.0):
         t = arr[:, 0]
         gaps = np.diff(t)
         age = (arr[:, 1] - arr[:, 0]) * 1000.0
-        print(f"{name}: {len(arr)} samples, {len(arr) / (t[-1] - t[0]):.1f} Hz, data age median {np.median(age):.1f} ms "
+        print(f"{name}: {len(arr)} samples, {len(arr) / (t[-1] - t[0]):.1f} Hz, "
+              f"data age median {np.median(age):.1f} ms "
               f"p95 {np.percentile(age, 95):.1f} ms, gaps > 50 ms: {int((gaps > 0.05).sum())}, longest gap "
               f"{gaps.max() * 1000:.0f} ms")
     t0, t1 = max(A[0, 0], B[0, 0]), min(A[-1, 0], B[-1, 0])
@@ -96,10 +109,12 @@ def analyse(a_name, b_name, A, B, hz=100.0):
     # Smoothed positions (0.2 s moving average) are used only to find the phases and the lag; the jitter and
     # spread figures use the unsmoothed samples.
     w = max(int(0.2 * hz), 1)
+
     def smooth(p):
         return np.stack([np.convolve(p[:, k], np.ones(w) / w, mode="same") for k in range(3)], axis=1)
     sa, sb = smooth(pa), smooth(pb)
     h = max(int(0.1 * hz), 1)
+
     def velocity(p):                                       # central difference over 0.2 s
         v = np.zeros_like(p)
         v[h:-h] = (p[2 * h:] - p[:-2 * h]) * hz / (2 * h)
@@ -140,9 +155,11 @@ def analyse(a_name, b_name, A, B, hz=100.0):
     # makes the pair most rigid (smallest spread); the spread is reported as streamed and with that lag removed.
     sub = idx[:: max(1, len(idx) // 3000)]
     ra = np.array([quat_to_mat(qa[i]) for i in sub])
+
     def rel_positions(shift_s):
         pbx = np.stack([np.interp(grid[sub] + shift_s, grid, pb[:, k]) for k in range(3)], axis=1)
         return np.einsum("nji,nj->ni", ra, pbx - pa[sub])          # R_a^T (p_b - p_a)
+
     def spread(shift_s):
         r = rel_positions(shift_s)
         return float(np.sqrt(((r - r.mean(axis=0)) ** 2).sum(axis=1).mean()))

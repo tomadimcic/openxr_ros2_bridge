@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """openxr_ros2_bridge: OpenXR controller poses -> ROS 2 teleoperation commands.
 
 ARISE reusable module A. Robot-agnostic: it knows nothing about the arm.
@@ -28,10 +39,10 @@ downstream nodes can measure the true motion-to-command latency.
 """
 import math
 
-import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
+import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool
 
@@ -93,6 +104,7 @@ def _nlerp(q0, q1, a):
 
 
 class OpenXRBridge(Node):
+
     def __init__(self):
         super().__init__("openxr_ros2_bridge")
         self.declare_parameter("hand", "right_hand")
@@ -105,7 +117,8 @@ class OpenXRBridge(Node):
         self.declare_parameter("input_timeout_s", 0.2)
         self.declare_parameter("velocity_window", 3)         # samples for finite difference
         self.declare_parameter("weld_button", 0)             # Joy buttons[] index of the arc-on control
-        self.declare_parameter("tracked_points", ["head", "right_hand", "left_hand", "trackers/right_elbow", "trackers/chest"])
+        self.declare_parameter("tracked_points", ["head", "right_hand", "left_hand", "trackers/right_elbow",
+                                                  "trackers/chest"])
 
         p = self.get_parameter
         hand = str(p("hand").value)
@@ -146,7 +159,8 @@ class OpenXRBridge(Node):
         self.last_input_rx = None
         self.samples = 0
         self.create_timer(0.05, self.watchdog)
-        self.get_logger().info(f"openxr_ros2_bridge: /openxr/{hand} (trigger from /openxr/{inputs}) -> {self.out_frame}, "
+        self.get_logger().info(f"openxr_ros2_bridge: /openxr/{hand} (trigger from /openxr/{inputs}) -> "
+                               f"{self.out_frame}, "
                                f"alpha={self.alpha}, v_max={self.v_max} m/s, timeout={self.timeout}s")
 
     def on_inputs(self, msg: Joy):
@@ -223,37 +237,44 @@ class OpenXRBridge(Node):
                         sign * rx / s * w, sign * ry / s * w, sign * rz / s * w)
         self.pub_twist.publish(tw)
 
+        if self.enabled and self._inputs_stale():
+            # the trigger stream stopped while poses still come: released exactly like a pose timeout, latch included
+            # (found by test_stale_trigger_counts_as_released: the latch was missed when this path saw it first)
+            self._release_on_timeout("trigger", self._age(self.last_input_rx))
         if self.trigger < self.trig_thr and self.rearm_needed:
             self.rearm_needed = False
             self._rearm_warned = False
             self.get_logger().info("trigger released: re-engagement gesture accepted")
         if self.trigger >= self.trig_thr and self.rearm_needed and not self._rearm_warned:
             self._rearm_warned = True
-            self.get_logger().warning("tracking is back but hold-to-run stays released: release and press the trigger to re-engage")
+            self.get_logger().warning("tracking is back but hold-to-run stays released: release and press the "
+                                      "trigger to re-engage")
         enable = self.trigger >= self.trig_thr and not self.rearm_needed and not self._inputs_stale()
         if enable != self.enabled:
             self.enabled = enable
             self.get_logger().info(f"hold-to-run {'ENGAGED' if enable else 'released'}")
         self.pub_enable.publish(Bool(data=enable))
 
+    def _age(self, stamp):
+        return (self.get_clock().now() - stamp).nanoseconds * 1e-9 if stamp is not None else float("inf")
+
     def _inputs_stale(self):
-        if self.last_input_rx is None:
-            return True
-        return (self.get_clock().now() - self.last_input_rx).nanoseconds * 1e-9 > self.timeout
+        return self._age(self.last_input_rx) > self.timeout
+
+    def _release_on_timeout(self, what, age_s):
+        """Release hold-to-run after an input timeout; it stays released until the trigger has been let go."""
+        self.enabled = False
+        self.rearm_needed = True        # motion must not resume by itself when tracking returns
+        self.pub_enable.publish(Bool(data=False))
+        self.get_logger().warning(f"OpenXR {what} input timeout ({age_s * 1000:.0f} ms): "
+                                  "hold-to-run released, re-engagement required")
 
     def watchdog(self):
-        if self.last_rx is None:
+        if self.last_rx is None or not self.enabled:
             return
-        now = self.get_clock().now()
-        age = (now - self.last_rx).nanoseconds * 1e-9
-        in_age = (now - self.last_input_rx).nanoseconds * 1e-9 if self.last_input_rx is not None else float("inf")
-        if (age > self.timeout or in_age > self.timeout) and self.enabled:
-            self.enabled = False
-            self.rearm_needed = True        # motion must not resume by itself when tracking returns
-            self.pub_enable.publish(Bool(data=False))
-            what = "pose" if age > self.timeout else "trigger"
-            self.get_logger().warning(f"OpenXR {what} input timeout ({max(age, in_age)*1000:.0f} ms): "
-                                   "hold-to-run released, re-engagement required")
+        age, in_age = self._age(self.last_rx), self._age(self.last_input_rx)
+        if age > self.timeout or in_age > self.timeout:
+            self._release_on_timeout("pose" if age > self.timeout else "trigger", max(age, in_age))
 
 
 def main(args=None):

@@ -19,5 +19,7 @@ import pytest
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257() -> None:
-    rc = main(argv=['.', 'test'])
-    assert rc == 0, 'Found code style errors / warnings'
+    # house style: the summary starts on the docstring's first line, as in PEP 257's own examples (D212 style);
+    # ament's defaults ask for it on the second line (D213)
+    rc = main(argv=[".", "test", "--add-ignore", "D213"])
+    assert rc == 0, "Found code style errors / warnings"

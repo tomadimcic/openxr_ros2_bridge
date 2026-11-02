@@ -62,7 +62,23 @@ ros2 run openxr_ros2_bridge openxr_ros2_bridge_node
 ros2 topic echo /openxr_ros2_bridge/twist
 ```
 
+## Tests
+
+`colcon test --packages-select openxr_ros2_bridge` runs, on every push in CI on ROS 2 Jazzy
+(`.github/workflows/ci.yml`):
+
+| Test | What it checks |
+| --- | --- |
+| `test_flake8`, `test_pep257`, `test_copyright`, `test_xmllint`, `test_mypy` | ament linters; house style in `setup.cfg` (double quotes, lines up to 120 characters) |
+| `test_conversions` | OpenXR stage to REP-103: positions, orientations, quaternion round trip, nlerp |
+| `test_bridge_node` | hold-to-run: engages only with a fresh pose and a pressed trigger, released within the input timeout on a dropout, never resumes by itself, a stale trigger counts as released, twist speed clamp |
+| `test_link_netem` | headset link through `openxr_udp_gateway` under tc/netem: engaged through 30 ms +- 10 ms delay and 2 % loss, released at 100 % loss and not resumed without the gesture (needs passwordless sudo, as on the CI runner) |
+
+`test/reply_port_check.py`, `test/tracker_boxes_check.py`, `test/headset_link_check.py` and
+`test/pose_precision_test.py` are scripts for the gateway and the real headset, run by hand.
+
 ## Status
 
-M5 thin slice: simulator + bridge working against the Tele-Craft graph. Real OpenXR
-client for the HTC Vive Focus Vision follows once the hardware arrives.
+Working with the HTC VIVE Focus Vision: the headset application sends its poses and inputs to
+`openxr_udp_gateway`, and VIVE Ultimate Trackers reach the bridge through the headset or through
+the PC.

@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """openxr_console: interactive OpenXR stand-in + operator HUD, until the headset arrives.
 
 Left pane: top view of the welder's reach. The mouse moves the torch hand (left/right and
@@ -32,11 +43,11 @@ import threading
 import time
 import tkinter as tk
 
-import rclpy
 from geometry_msgs.msg import PoseStamped
+import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Joy
 
 from openxr_ros2_bridge.openxr_sim import OpenXRSim, q_axis, q_mul, v_sub, v_unit
@@ -72,6 +83,7 @@ def elbow_estimate(shoulder, hand, l_upper, l_fore):
 
 
 class ConsoleNode(Node):
+
     def __init__(self, state, lock):
         super().__init__("openxr_console")
         self.declare_parameter("rate_hz", 90.0)
@@ -81,8 +93,10 @@ class ConsoleNode(Node):
         self.declare_parameter("forearm_m", 0.233)
         self.declare_parameter("eye_height_m", 1.22)
         self.declare_parameter("spectator", False)     # true: show the HUD only, publish nothing (another input drives)
-        self.declare_parameter("inputs_only", False)   # true: publish only the trigger/arc inputs (a tracker gives the pose)
-        self.declare_parameter("relay_pose_topic", "")  # hold M: drive with this pose (e.g. /openxr/trackers/torch/pose)
+        # true: publish only the trigger/arc inputs (a tracker gives the pose)
+        self.declare_parameter("inputs_only", False)
+        # hold M: drive with this pose (e.g. /openxr/trackers/torch/pose)
+        self.declare_parameter("relay_pose_topic", "")
         self.declare_parameter("geometry", "")          # Tk geometry, e.g. "+1900+0", for scripted window placement
         p = self.get_parameter
         self.state, self.lock = state, lock
@@ -144,7 +158,8 @@ class ConsoleNode(Node):
         t = time.monotonic()
         with self.lock:
             hand = tuple(self.state["hand"])
-            want_tracker = (self.state.get("m_trigger", False) or self.state.get("global_trigger", False)) and self.relay_topic != ""
+            want_tracker = ((self.state.get("m_trigger", False) or self.state.get("global_trigger", False))
+                            and self.relay_topic != "")
             want_mouse = self.state["trigger"]
             src = "tracker" if want_tracker else ("mouse" if want_mouse else self.state.get("src", "mouse"))
             if src != self.state.get("src", "mouse"):
@@ -178,7 +193,8 @@ class ConsoleNode(Node):
         if not self.inputs_only:
             pose(self.pub_lhand, (-0.25, 0.78, -0.28), (0.0, 0.0, 0.0, 1.0))
             yaw = math.radians(-12.0 * (hand[0] / 0.3))
-            pose(self.pub_head, (0.0, self.eye_h, 0.0), q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, math.radians(-head_pitch))))
+            pose(self.pub_head, (0.0, self.eye_h, 0.0),
+                 q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, math.radians(-head_pitch))))
         j = Joy()
         j.header.stamp, j.header.frame_id = now, self.frame
         j.axes, j.buttons = [trigger, 0.0], [weld, 0, 0]
@@ -187,6 +203,7 @@ class ConsoleNode(Node):
 
 class GlobalKey(threading.Thread):
     """Hold state of one key, read from every keyboard's /dev/input/eventN (independent of window focus)."""
+
     EVENT = struct.Struct("llHHi")        # struct input_event: timeval, type, code, value
     EV_KEY = 1
     CODES = {"t": 20, "m": 50, "space": 57}
@@ -239,10 +256,12 @@ class GlobalKey(threading.Thread):
 
 
 class Console:
+
     def __init__(self, node, state, lock):
         self.node, self.state, self.lock = node, state, lock
         self.root = tk.Tk()
-        self.root.title("Tele-Craft operator console  (VR overlay preview, spectator)" if node.spectator else "Tele-Craft operator console  (OpenXR stand-in + VR overlay preview)")
+        self.root.title("Tele-Craft operator console  (VR overlay preview, spectator)" if node.spectator
+                        else "Tele-Craft operator console  (OpenXR stand-in + VR overlay preview)")
         self.root.configure(bg="#1b2430")
         if node.geometry:
             self.root.geometry(node.geometry)
@@ -251,35 +270,46 @@ class Console:
         tk.Label(left, text="TORCH HAND  ·  top view of your reach", fg="#98a3b3", bg="#1b2430",
                  font=("DejaVu Sans", 10, "bold")).pack(anchor="w")
         self.W = self.H = 420
-        self.canvas = tk.Canvas(left, width=self.W, height=self.H, bg="#0f141b", highlightthickness=0, cursor="crosshair")
+        self.canvas = tk.Canvas(left, width=self.W, height=self.H, bg="#0f141b", highlightthickness=0,
+                                cursor="crosshair")
         self.canvas.pack()
         tk.Label(left, text="mouse: move hand   wheel: lift/lower   HOLD LEFT BUTTON or M: trigger (robot moves)\n"
-                            "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger\nR: reset hand   X: reset the cell after a FAULT",
+                            "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   "
+                            "SPACE: toggle trigger\nR: reset hand   X: reset the cell after a FAULT",
                  fg="#98a3b3", bg="#1b2430", justify="left", font=("DejaVu Sans", 9)).pack(anchor="w", pady=(6, 0))
         self.height_bar = tk.Canvas(left, width=self.W, height=18, bg="#0f141b", highlightthickness=0)
         self.height_bar.pack(pady=(6, 0))
 
         right = tk.Frame(self.root, bg="#1b2430", width=360)
         right.grid(row=0, column=1, sticky="n", padx=(0, 12), pady=12)
-        tk.Label(right, text="VR OVERLAY PREVIEW", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans", 10, "bold")).pack(anchor="w")
+        tk.Label(right, text="VR OVERLAY PREVIEW", fg="#98a3b3", bg="#1b2430",
+                 font=("DejaVu Sans", 10, "bold")).pack(anchor="w")
         self.prompt_box = tk.Frame(right, bg="#e6f4ea", width=360, height=150)
         self.prompt_box.pack(fill="x", pady=(4, 10))
         self.prompt_box.pack_propagate(False)
-        self.prompt_title = tk.Label(self.prompt_box, text="Posture OK", bg="#e6f4ea", fg="#1d7a3a", font=("DejaVu Sans", 20, "bold"))
+        self.prompt_title = tk.Label(self.prompt_box, text="Posture OK", bg="#e6f4ea", fg="#1d7a3a",
+                                     font=("DejaVu Sans", 20, "bold"))
         self.prompt_title.pack(anchor="w", padx=12, pady=(12, 0))
-        self.prompt_text = tk.Label(self.prompt_box, text="", bg="#e6f4ea", fg="#1b2430", font=("DejaVu Sans", 11), wraplength=330, justify="left")
+        self.prompt_text = tk.Label(self.prompt_box, text="", bg="#e6f4ea", fg="#1b2430", font=("DejaVu Sans", 11),
+                                    wraplength=330, justify="left")
         self.prompt_text.pack(anchor="w", padx=12, pady=(4, 0))
-        self.prompt_score = tk.Label(self.prompt_box, text="RULA –", bg="#e6f4ea", fg="#1b2430", font=("DejaVu Sans Mono", 11))
+        self.prompt_score = tk.Label(self.prompt_box, text="RULA –", bg="#e6f4ea", fg="#1b2430",
+                                     font=("DejaVu Sans Mono", 11))
         self.prompt_score.pack(anchor="w", padx=12, pady=(4, 0))
-        self.auth = tk.Label(right, text="cell: –", fg="#e6ebf2", bg="#1b2430", font=("DejaVu Sans", 13, "bold"), anchor="w")
+        self.auth = tk.Label(right, text="cell: –", fg="#e6ebf2", bg="#1b2430", font=("DejaVu Sans", 13, "bold"),
+                             anchor="w")
         self.auth.pack(fill="x")
-        self.auth_reason = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans", 9), anchor="w", wraplength=340, justify="left")
+        self.auth_reason = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans", 9), anchor="w",
+                                    wraplength=340, justify="left")
         self.auth_reason.pack(fill="x")
-        self.stats = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10), anchor="w", justify="left")
+        self.stats = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10), anchor="w",
+                              justify="left")
         self.stats.pack(fill="x", pady=(8, 0))
-        self.why = tk.Label(right, text="", fg="#e8944a", bg="#1b2430", font=("DejaVu Sans", 10), anchor="w", justify="left", wraplength=340)
+        self.why = tk.Label(right, text="", fg="#e8944a", bg="#1b2430", font=("DejaVu Sans", 10), anchor="w",
+                            justify="left", wraplength=340)
         self.why.pack(fill="x", pady=(4, 0))
-        self.hand_lbl = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10), anchor="w", justify="left")
+        self.hand_lbl = tk.Label(right, text="", fg="#98a3b3", bg="#1b2430", font=("DejaVu Sans Mono", 10),
+                                 anchor="w", justify="left")
         self.hand_lbl.pack(fill="x", pady=(8, 0))
 
         c = self.canvas
@@ -309,7 +339,7 @@ class Console:
                                             "(works whichever window has the focus)")
             else:
                 self.node.get_logger().warning("cannot read the keyboard devices: T/M work only while the console has "
-                                            "the focus (run scripts/install_keyboard_uaccess_udev.sh)")
+                                               "the focus (run scripts/install_keyboard_uaccess_udev.sh)")
         self._last = {}
         self.root.after(100, self.redraw)
 
@@ -402,7 +432,6 @@ class Console:
             head_pitch = self.state["head_pitch"]
             prompt, rula, auth = self.state.get("prompt"), self.state.get("rula"), self.state.get("auth")
             moves, rejected = self.state.get("moves", 0), self.state.get("rejected", 0)
-            last_reject = self.state.get("last_reject")
         c = self.canvas
         c.delete("all")
         for i in range(1, 7):
@@ -422,7 +451,10 @@ class Console:
         c.create_oval(px - r, py - r, px + r, py + r, outline=color, width=3)
         c.create_line(px - r - 6, py, px + r + 6, py, fill=color)
         c.create_line(px, py - r - 6, px, py + r + 6, fill=color)
-        c.create_text(px, py + r + 14, text=(f"TRIGGER: robot follows the {'TRACKER' if src == 'tracker' else 'mouse'}" if trig else "trigger released") + ("   ARC ON" if self.state.get("weld") else ""), fill=color, font=("DejaVu Sans", 9, "bold"))
+        trig_text = (f"TRIGGER: robot follows the {'TRACKER' if src == 'tracker' else 'mouse'}" if trig
+                     else "trigger released")
+        c.create_text(px, py + r + 14, text=trig_text + ("   ARC ON" if self.state.get("weld") else ""), fill=color,
+                      font=("DejaVu Sans", 9, "bold"))
         if self.node.relay_topic:
             try:
                 focused = self.root.focus_displayof() is not None
@@ -441,8 +473,10 @@ class Console:
         frac = (hand[1] - Y_RANGE[0]) / (Y_RANGE[1] - Y_RANGE[0])
         hb.create_rectangle(0, 4, self.W, 14, outline="#1f2a36")
         hb.create_rectangle(0, 4, frac * self.W, 14, fill="#6fa0ff", outline="")
-        hb.create_text(4, 9, text=f"hand height {hand[1]:.2f} m   (shoulder 1.09)", anchor="w", fill="#e6ebf2", font=("DejaVu Sans", 8))
+        hb.create_text(4, 9, text=f"hand height {hand[1]:.2f} m   (shoulder 1.09)", anchor="w", fill="#e6ebf2",
+                       font=("DejaVu Sans", 8))
         # HUD (only reconfigure what changed: Tk reconfigures are expensive and steal time from publishing)
+
         def setif(widget, key, **kw):
             if self._last.get(key) != kw:
                 self._last[key] = kw
@@ -451,17 +485,25 @@ class Console:
         fg, bg = LEVEL_COLORS.get(level, LEVEL_COLORS[0])
         for i, w in enumerate((self.prompt_box, self.prompt_text, self.prompt_score)):
             setif(w, f"bg{i}", bg=bg)
-        setif(self.prompt_title, "title", bg=bg, fg=fg, text=(prompt.title if prompt is not None else "waiting for RULA"))
+        setif(self.prompt_title, "title", bg=bg, fg=fg,
+              text=(prompt.title if prompt is not None else "waiting for RULA"))
         setif(self.prompt_text, "ptext", text=(prompt.text if prompt is not None else ""))
         if rula is not None and rula.valid:
-            setif(self.prompt_score, "score", text=f"RULA {rula.score}  (action level {rula.action_level})   upper arm {rula.upper_arm_flexion_deg:.0f}°  neck {rula.neck_flexion_deg:.0f}°  wrist {rula.wrist_flexion_deg:.0f}°")
+            setif(self.prompt_score, "score",
+                  text=f"RULA {rula.score}  (action level {rula.action_level})   "
+                       f"upper arm {rula.upper_arm_flexion_deg:.0f}°  neck {rula.neck_flexion_deg:.0f}°  "
+                       f"wrist {rula.wrist_flexion_deg:.0f}°")
         if auth is not None:
             st = STATE_NAMES.get(auth.state, "?")
-            col = {"ENABLED": "#6fdc8c", "READY": "#e6ebf2", "FAULT": "#ff5a3c", "EMERGENCY STOP": "#ff5a3c"}.get(st, "#e8944a")
-            setif(self.auth, "auth", text=f"cell: {st}   mode {['STANDBY', 'MOVE', 'WELD'][auth.process_mode] if auth.process_mode < 3 else '?'}", fg=col)
-            setif(self.auth_reason, "reason", text=auth.reason + ("   → press X or the button to reset" if st in ("FAULT", "SAFE STOP") else ""))
+            col = {"ENABLED": "#6fdc8c", "READY": "#e6ebf2", "FAULT": "#ff5a3c",
+                   "EMERGENCY STOP": "#ff5a3c"}.get(st, "#e8944a")
+            mode_name = ["STANDBY", "MOVE", "WELD"][auth.process_mode] if auth.process_mode < 3 else "?"
+            setif(self.auth, "auth", text=f"cell: {st}   mode {mode_name}", fg=col)
+            setif(self.auth_reason, "reason",
+                  text=auth.reason + ("   → press X or the button to reset" if st in ("FAULT", "SAFE STOP") else ""))
         setif(self.stats, "stats", text=f"moves executed {moves:5d}   rejected {rejected:4d}")
-        setif(self.hand_lbl, "hand", text=f"hand xr  x {hand[0]:+.2f}  y {hand[1]:.2f}  z {hand[2]:+.2f}\nhead pitch {head_pitch:+.0f}°")
+        setif(self.hand_lbl, "hand",
+              text=f"hand xr  x {hand[0]:+.2f}  y {hand[1]:.2f}  z {hand[2]:+.2f}\nhead pitch {head_pitch:+.0f}°")
         self.root.after(100, self.redraw)
 
     def run(self):

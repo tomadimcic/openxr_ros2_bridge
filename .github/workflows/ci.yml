@@ -1,0 +1,22 @@
+# Build and test on ROS 2 Jazzy (the ARISE reference distribution): ament linters (flake8, pep257, copyright,
+# xmllint, mypy), unit and functional tests, and the tc/netem network resilience test (the runner has sudo).
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+      - uses: ros-tooling/action-ros-ci@v0.4
+        with:
+          package-name: openxr_ros2_bridge
+          target-ros2-distro: jazzy
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: colcon-logs
+          path: ros_ws/log

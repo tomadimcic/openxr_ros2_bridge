@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """openxr_udp_gateway: receive a standalone headset's OpenXR poses over UDP and republish the raw /openxr/* topics.
 
 A standalone headset (e.g. HTC VIVE Focus Vision) runs a small OpenXR application that cannot publish ROS 2
@@ -8,7 +19,8 @@ topics itself. It sends its poses and controller inputs as UDP datagrams to this
 exactly what the console and the scripted welder publish, so openxr_ros2_bridge_node and everything after it
 stay unchanged:
 
-  out  /openxr/head/pose, /openxr/<hand>/pose, /openxr/trackers/<role>/pose   geometry_msgs/PoseStamped, frame openxr_stage
+  out  /openxr/head/pose, /openxr/<hand>/pose, /openxr/trackers/<role>/pose   geometry_msgs/PoseStamped,
+                                                                            frame openxr_stage
   out  /openxr/<hand>/inputs   sensor_msgs/Joy: axes [trigger, grip, stick x, stick y],
                                 buttons [arc request, a, b, menu, stick click]
   out  ~/status                                                            std_msgs/String (JSON link statistics, 1 Hz)
@@ -25,7 +37,8 @@ Protocol v1 (UTF-8 JSON, one object per datagram)
      "frame":"unity"|"openxr","origin":"floor","recenter":<count of tracking-origin changes>,
      "dev":[{"id":"head"|"right_hand"|"left_hand"|"tracker_<k>","tr":0|1,"st":<InputTrackingState bits>,
              "p":[x,y,z],"q":[x,y,z,w]}, ...],
-     "in":[{"id":"right_hand","trigger":0..1,"grip":0..1,"a":0|1,"b":0|1,"menu":0|1,"stick":[x,y],"stick_click":0|1}, ...],
+     "in":[{"id":"right_hand","trigger":0..1,"grip":0..1,"a":0|1,"b":0|1,"menu":0|1,
+            "stick":[x,y],"stick_click":0|1}, ...],
      "sync":{"t1":..,"t2":..,"t3":..,"t4":..},            # echo of the last status, see clock below
      "reply_port":P}                                      # optional: the port this app listens on
   PC -> headset (to the sender's address, at the datagram's reply_port, else the parameter reply_port, default 9102;
@@ -53,17 +66,17 @@ Conventions
     until its pose changes.
   * Automatic tracker roles: tracker_roles = [auto] assigns auto_roles (default torch, right_forearm,
     right_upper_arm) by the mean distance of each tracker to the right controller over auto_window_s. Only
-    trackers whose position has really moved (proven_m within frozen_window_s) take part, so a placeholder never
-    gets a role. The first role (torch) goes alone to the nearest tracker within auto_first_max_m of the
-    controller (it is taped to it; 25 Oct 2026: 28 mm, a forearm tracker is 0.1 m or more away). From then on the
-    torch counts as lost while its offset from the controller, in the controller's frame, differs from its mean
-    over the first 30 samples after assignment by more than pair_tol_m (rigid pair on the real headset, 25 Oct
-    2026: at most 20 mm while turning 95 deg and moving 25 cm) (one of the two lost its position: a jump keeps the distance
-    but not this offset); the turn-without-moving check is not applied to it, since
-    twisting the torch turns the tracker nearly in place (25 Oct 2026: false losses, latched safety faults), so the robot does not wait for the arm trackers; the other roles, nearest first, once that many
-    more trackers have a position. Until then the panel note says what is missing. The headset may number the
-    trackers differently in every session, so this runs again when the application restarts, or on
-    ~/reassign_roles. Trackers without a role are published as /openxr/trackers/tracker_<k>/pose.
+    trackers whose position has really moved (proven_m within frozen_window_s) take part, so a placeholder never gets
+    a role. The first role (torch) goes alone to the nearest tracker within auto_first_max_m of the controller (it is
+    taped to it; 25 Oct 2026: 28 mm, a forearm tracker is 0.1 m or more away). From then on the torch counts as lost
+    while its offset from the controller, in the controller's frame, differs from its mean over the first 30 samples
+    after assignment by more than pair_tol_m (rigid pair on the real headset, 25 Oct 2026: at most 20 mm while turning
+    95 deg and moving 25 cm) (one of the two lost its position: a jump keeps the distance but not this offset); the
+    turn-without-moving check is not applied to it, since twisting the torch turns the tracker nearly in place (25 Oct
+    2026: false losses, latched safety faults), so the robot does not wait for the arm trackers; the other roles,
+    nearest first, once that many more trackers have a position. Until then the panel note says what is missing. The
+    headset may number the trackers differently in every session, so this runs again when the application restarts, or
+    on ~/reassign_roles. Trackers without a role are published as /openxr/trackers/tracker_<k>/pose.
   * Trackers on the PC instead (publish_trackers false): the headset's own trackers are ignored, and the trackers of
     vive_tracker_pc (its ~/status JSON on extra_status_topic) are listed on the panel instead. The headset app only
     draws its own trackers, so show_trackers roles (their /openxr/trackers/<role>/pose, already aligned with the
@@ -86,24 +99,24 @@ Conventions
     round trip in the last `sync_window` is used. Header stamps are headset sample time + offset, i.e. PC time,
     so latency measurements downstream stay valid. Until the first sync the PC receive time is used.
 """
+from collections import deque
 import json
 import math
 import socket
 import threading
 import time
-from collections import deque
 
-import rclpy
+from builtin_interfaces.msg import Time
 from geometry_msgs.msg import PoseStamped
+import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.time import Time as RclTime
 from sensor_msgs.msg import Joy
-from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from builtin_interfaces.msg import Time
-from rclpy.time import Time as RclTime
 import tf2_ros
+from visualization_msgs.msg import Marker, MarkerArray
 
 try:
     from rula_msgs.msg import ErgoPrompt, RulaScore
@@ -161,6 +174,7 @@ class ClockSync:
 
 
 class UdpGateway(Node):
+
     def __init__(self):
         super().__init__("openxr_udp_gateway")
         self.declare_parameter("listen_port", 9101)
@@ -170,7 +184,8 @@ class UdpGateway(Node):
         self.declare_parameter("sync_window", 200)            # sync samples kept (~20 s at 10 Hz)
         # tracker index -> role; tracker k is published on /openxr/trackers/<role>/pose (default role: tracker_<k>)
         self.declare_parameter("tracker_roles", ["chest", "right_elbow"])
-        self.declare_parameter("arc_button", "a")              # controller button reported as Joy buttons[0] (arc request)
+        # controller button reported as Joy buttons[0] (arc request)
+        self.declare_parameter("arc_button", "a")
         self.declare_parameter("frozen_pos_m", 0.003)          # rotation-only detection, see module docstring
         self.declare_parameter("frozen_window_s", 1.0)
         self.declare_parameter("frozen_rot_deg", 15.0)
@@ -182,7 +197,8 @@ class UdpGateway(Node):
         self.declare_parameter("world_frame", "world")
         self.declare_parameter("stage_in_world", [-2.0, 1.2, 0.0, 0.0])
         self.declare_parameter("scene_topic", "/telecraft/workpiece")    # "" = no scene objects
-        self.declare_parameter("auto_roles", ["torch", "right_forearm", "right_upper_arm"])   # nearest to the controller first
+        # nearest to the controller first
+        self.declare_parameter("auto_roles", ["torch", "right_forearm", "right_upper_arm"])
         self.declare_parameter("auto_window_s", 2.0)
         self.declare_parameter("auto_first_max_m", 0.08)
         self.declare_parameter("pair_tol_m", 0.03)
@@ -241,7 +257,8 @@ class UdpGateway(Node):
                              history=HistoryPolicy.KEEP_LAST, depth=1)
         self.auth = self.prompt = self.rula = None
         if MotionAuthority is not None:
-            self.create_subscription(MotionAuthority, "/telecraft/authority", lambda m: setattr(self, "auth", m), latched)
+            self.create_subscription(MotionAuthority, "/telecraft/authority", lambda m: setattr(self, "auth", m),
+                                     latched)
         if ErgoPrompt is not None:
             self.create_subscription(ErgoPrompt, "/human/ergo_prompt", lambda m: setattr(self, "prompt", m), latched)
             self.create_subscription(RulaScore, "/human/risk_score", lambda m: setattr(self, "rula", m), 10)
@@ -351,7 +368,7 @@ class UdpGateway(Node):
             rc = msg.get("recenter")
             if rc is not None and self.recenter is not None and rc != self.recenter:
                 self.get_logger().warning(f"headset tracking origin changed (recenter {self.recenter} -> {rc}); "
-                                       "absolute calibrations are invalid until redone")
+                                          "absolute calibrations are invalid until redone")
             self.recenter = rc
         stamp = ns_to_time(t_h + offset if offset is not None else t_rx)
         unity = msg.get("frame", "unity") == "unity"
@@ -404,7 +421,8 @@ class UdpGateway(Node):
             j = Joy()
             j.header.stamp, j.header.frame_id = stamp, self.frame
             j.axes = [float(i.get("trigger", 0.0)), float(i.get("grip", 0.0)), float(stick[0]), float(stick[1])]
-            # buttons: [arc request (arc_button), a, b, menu, stick click]; the bridge reads buttons[0] as the arc request
+            # buttons: [arc request (arc_button), a, b, menu, stick click];
+            # the bridge reads buttons[0] as the arc request
             j.buttons = [int(i.get(self.arc_button, 0)), int(i.get("a", 0)), int(i.get("b", 0)),
                          int(i.get("menu", 0)), int(i.get("stick_click", 0))]
             pub.publish(j)
@@ -415,8 +433,11 @@ class UdpGateway(Node):
             self.valid = valid
 
     def auto_assign(self, devs, n_free):
-        """Automatic roles (module docstring). devs: devices valid in this datagram; n_free: trackers in it without
-        a role, tracked or not (only then is a missing arm tracker worth a note)."""
+        """Assign the automatic roles (module docstring).
+
+        devs: devices valid in this datagram; n_free: trackers in it without a role, tracked or not (only then is a
+        missing arm tracker worth a note).
+        """
         hand = next((d for d in devs if d.get("id") == "right_hand"), None)
         cand = [d for d in devs if str(d.get("id", "")).startswith("tracker_") and d["id"] not in self.assigned
                 and self.motion_state(d["id"])["proven"]]
@@ -484,7 +505,8 @@ class UdpGateway(Node):
             trackers = json.loads(msg.data).get("trackers", {})
         except ValueError:
             return
-        self.extra_tracking = [{"id": role, "ok": int(t.get("published_hz", 0)) > 0} for role, t in sorted(trackers.items())]
+        self.extra_tracking = [{"id": role, "ok": int(t.get("published_hz", 0)) > 0}
+                               for role, t in sorted(trackers.items())]
         self.extra_t = time.monotonic()
 
     def on_note(self, msg):
@@ -506,7 +528,7 @@ class UdpGateway(Node):
         return m
 
     def torch_off_controller(self, d, hand, unity):
-        """True while the torch tracker is not where it sits on the controller (see module docstring)."""
+        """Return True while the torch tracker is not where it sits on the controller (see module docstring)."""
         if hand is None:
             return self.pair_bad                       # cannot judge without the controller: keep the last verdict
         pt, _ = unity_to_openxr(d["p"], d["q"]) if unity else (d["p"], d["q"])
@@ -529,12 +551,15 @@ class UdpGateway(Node):
         elif not self.pair_bad and err > self.pair_tol:
             self.pair_bad = True
             self.get_logger().warning(f"{d['id']} (torch): {err * 100:.0f} cm off its place on the controller "
-                                   "(tracking lost), treated as lost")
+                                      "(tracking lost), treated as lost")
         return self.pair_bad
 
     def rotation_only(self, dev_id, pos, quat, now, turn_check=True):
-        """True while a tracker has no usable position: it turns without moving (rotation-only tracking) or its
-        pose does not change at all (not updating), see module docstring."""
+        """Return True while a tracker has no usable position.
+
+        It turns without moving (rotation-only tracking) or its pose does not change at all (not updating), see the
+        module docstring.
+        """
         m = self.motion_state(dev_id)
         if m["stale"]:
             if list(pos) == m["ref"] and list(quat) == m["refq"]:
@@ -558,14 +583,14 @@ class UdpGateway(Node):
         if span == 0.0 and all(x[2] == h[0][2] for x in h):
             m["stale"], m["ref"], m["refq"] = True, list(pos), list(quat)
             self.get_logger().warning(f"{dev_id}: pose unchanged for {self.frozen_window:.1f} s (tracker off or not "
-                                   "updating), treated as lost")
+                                      "updating), treated as lost")
             return True
         if span > self.proven_m:
             m["proven"] = True
         elif turn_check and span < self.frozen_pos and max(angle_between(h[0][2], x[2]) for x in h) > self.frozen_rot:
             m["frozen"], m["ref"] = True, list(pos)
             self.get_logger().warning(f"{dev_id}: turns without moving (rotation-only tracking, no position), "
-                                   "treated as lost")
+                                      "treated as lost")
         return m["frozen"]
 
     def mark_placeholders(self, trackers):
@@ -581,7 +606,7 @@ class UdpGateway(Node):
                     else:
                         m["frozen"], m["ref"] = True, list(d["p"])
                         self.get_logger().warning(f"{d['id']}: reported at the same spot as another tracker "
-                                               "(rotation-only placeholder, no position), treated as lost")
+                                                  "(rotation-only placeholder, no position), treated as lost")
 
     # ------------------------------------------------------------------ twin
     def to_stage_unity(self, frame, pos, quat):
@@ -624,13 +649,15 @@ class UdpGateway(Node):
         objects = []
         for key, m in self.scene.items():
             try:
-                pu, qu = self.to_stage_unity(m.header.frame_id, (m.pose.position.x, m.pose.position.y, m.pose.position.z),
+                pu, qu = self.to_stage_unity(m.header.frame_id,
+                                             (m.pose.position.x, m.pose.position.y, m.pose.position.z),
                                              (m.pose.orientation.x, m.pose.orientation.y, m.pose.orientation.z,
                                               m.pose.orientation.w))
             except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
                 continue
             objects.append({"id": m.text or key, "p": [round(v, 5) for v in pu], "q": [round(v, 6) for v in qu],
-                            "s": [round(m.scale.y, 5), round(m.scale.z, 5), round(m.scale.x, 5)],   # ROS (x,y,z) -> Unity
+                            # ROS (x,y,z) -> Unity
+                            "s": [round(m.scale.y, 5), round(m.scale.z, 5), round(m.scale.x, 5)],
                             "c": [round(m.color.r, 3), round(m.color.g, 3), round(m.color.b, 3)]})
         return objects
 

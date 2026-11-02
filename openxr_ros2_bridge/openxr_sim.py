@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Deterministic OpenXR input simulator: a *seated* welder holding the deactivated torch.
 
 Publishes what the headset client will publish once the HTC Vive Focus Vision and the
@@ -21,10 +32,10 @@ at the seam. Motion is a function of the sample index, so runs are reproducible.
 """
 import math
 
-import rclpy
 from geometry_msgs.msg import PoseStamped
+import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Joy
 
 
@@ -72,6 +83,7 @@ def v_cross(a, b):
 
 
 class OpenXRSim(Node):
+
     def __init__(self):
         super().__init__("openxr_sim")
         self.declare_parameter("rate_hz", 90.0)
@@ -87,7 +99,8 @@ class OpenXRSim(Node):
         self.declare_parameter("release_s", 2.0)
         self.declare_parameter("dropout_at_s", -1.0)
         self.declare_parameter("dropout_duration_s", 1.0)
-        self.declare_parameter("reengage_s", 0.8)     # after a dropout the scripted welder releases the trigger for this long
+        # after a dropout the scripted welder releases the trigger for this long
+        self.declare_parameter("reengage_s", 0.8)
         self.declare_parameter("loop", True)
         self.declare_parameter("alternate_high_reach", True)   # every other pass is a high, awkward seam (RULA >= 5)
         # seated welder geometry (stage frame, metres): chair 0.45 m, right shoulder, arm lengths
@@ -134,7 +147,8 @@ class OpenXRSim(Node):
         self.k = 0
         self.create_timer(1.0 / self.rate, self.tick)
         self.get_logger().info(f"OpenXR simulator (seated welder): {self.rate:.0f} Hz, seam {self.seam*1000:.0f} mm at "
-                               f"{self.speed*1000:.0f} mm/s, time x{self.tscale:g}, cycle {self.t_cycle/self.tscale:.1f} s"
+                               f"{self.speed*1000:.0f} mm/s, time x{self.tscale:g}, "
+                               f"cycle {self.t_cycle/self.tscale:.1f} s"
                                + (f", dropout at {self.dropout_at:.1f} s" if self.dropout_at >= 0 else ""))
 
     def _noise(self, k, salt):
@@ -178,8 +192,11 @@ class OpenXRSim(Node):
 
     @staticmethod
     def hand_quat(fore_dir, pitch):
-        """Quaternion whose -Z (OpenXR pointing axis) is the forearm direction pitched down by `pitch`
-        about the lateral axis, with +Y kept as close to world up as possible."""
+        """Return the hand orientation for a forearm direction.
+
+        The quaternion's -Z (OpenXR pointing axis) is the forearm direction pitched down by `pitch` about the
+        lateral axis, with +Y kept as close to world up as possible.
+        """
         up = (0.0, 1.0, 0.0)
         lateral = v_unit(v_cross(up, tuple(-c for c in fore_dir)))      # = right-hand X axis
         if v_norm(lateral) < 1e-6:
@@ -226,9 +243,11 @@ class OpenXRSim(Node):
         cycle = int(ts // self.t_cycle)
         high = self.alternate and cycle % 2 == 1
         hand, trigger, phase, prog = self.scenario(t, high, reverse=(cycle % 2 == 1))
-        if self.dropout_at >= 0 and self.dropout_at + self.dropout_len <= t_abs < self.dropout_at + self.dropout_len + self.reengage:
+        if (self.dropout_at >= 0
+                and self.dropout_at + self.dropout_len <= t_abs < self.dropout_at + self.dropout_len + self.reengage):
             if abs(t_abs - (self.dropout_at + self.dropout_len)) < 1.0 / self.rate:
-                self.get_logger().info(f"tracking back: releasing the trigger for {self.reengage:.1f} s (re-engagement gesture)")
+                self.get_logger().info(f"tracking back: releasing the trigger for {self.reengage:.1f} s "
+                                       "(re-engagement gesture)")
             trigger = 0.0
         hand = v_add(hand, tuple(self.jitter * self._noise(k, i) for i in range(3)))
         elbow = self.elbow_from(hand)

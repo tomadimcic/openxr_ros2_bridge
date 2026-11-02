@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Entanglenet GmbH
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """reply_port_check: openxr_udp_gateway answers an app at the port it names (reply_port), else at its parameter.
 
 The camera app listens on any free port (the twin app, paused in the background, can hold 9102) and names it in its
@@ -22,7 +33,8 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser()
     ap.add_argument("--domain", type=int, default=78)
-    ap.add_argument("--port", type=int, default=19111, help="gateway listen port; the parameter reply_port is the next one")
+    ap.add_argument("--port", type=int, default=19111,
+                    help="gateway listen port; the parameter reply_port is the next one")
     args = ap.parse_args()
     env = dict(os.environ, ROS_DOMAIN_ID=str(args.domain), ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST")
     env.pop("FASTDDS_DEFAULT_PROFILES_FILE", None)
@@ -71,7 +83,8 @@ def main():
         first = run(None, 20.0, until_status=True)
         check("gateway up, status at the parameter reply_port", first["parameter"] > 0)
         a = run(None, 2.0)
-        check("app names no port (installed twin app): status at the parameter's", a["parameter"] >= 15 and a["own"] == 0,
+        check("app names no port (installed twin app): status at the parameter's",
+              a["parameter"] >= 15 and a["own"] == 0,
               f"{a}")
         run(own_port, 0.5)                                      # the switch: datagrams already on the way
         b = run(own_port, 2.0)
