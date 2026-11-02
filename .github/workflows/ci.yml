@@ -15,6 +15,20 @@ jobs:
       - uses: ros-tooling/setup-ros@v0.7
         with:
           required-ros-distributions: jazzy
+      - uses: actions/checkout@v4
+        with:
+          path: deps_check
+      - name: Install the dependencies with rosdep, stopping at any failed install
+        # action-ros-ci runs rosdep with -r (continue past errors): a failed download then surfaced only as
+        # "No module named 'ament_copyright'" in every test (2 Nov 2026). Here a failure stops the job at this step.
+        shell: bash
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
+          source /opt/ros/jazzy/setup.bash
+          sudo apt-get update
+          rosdep update --rosdistro jazzy
+          rosdep install --from-paths deps_check --ignore-src -y --rosdistro jazzy
+          rm -rf deps_check
       - uses: ros-tooling/action-ros-ci@v0.4
         with:
           package-name: openxr_ros2_bridge
