@@ -219,7 +219,7 @@ class OpenXRSim(Node):
         t_abs = k / self.rate
         if self.dropout_at >= 0 and self.dropout_at <= t_abs < self.dropout_at + self.dropout_len:
             if abs(t_abs - self.dropout_at) < 1.0 / self.rate:
-                self.get_logger().warn(f"Injected tracking dropout for {self.dropout_len:.1f} s")
+                self.get_logger().warning(f"Injected tracking dropout for {self.dropout_len:.1f} s")
             return
         ts = t_abs * self.tscale
         t = ts % self.t_cycle if self.loop else min(ts, self.t_cycle - 1e-3)

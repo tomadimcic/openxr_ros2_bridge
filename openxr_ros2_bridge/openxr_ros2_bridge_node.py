@@ -7,7 +7,10 @@ ARISE reusable module A. Robot-agnostic: it knows nothing about the arm.
 
 Input (from an OpenXR client, real or simulated):
   /openxr/<hand>/pose     geometry_msgs/PoseStamped  OpenXR stage space (+X right, +Y up, -Z fwd)
-  /openxr/<hand>/inputs   sensor_msgs/Joy            axes[0] = trigger (hold-to-run)
+  /openxr/<input_source>/inputs   sensor_msgs/Joy    axes[0] = trigger (hold-to-run)
+  <hand> is the device that moves the robot (a controller or a tracker, e.g. trackers/torch);
+  <input_source> carries the hold-to-run trigger and defaults to the same device. With two devices a
+  stale trigger counts as released, exactly like a stale pose.
 
 Output:
   ~/pose    geometry_msgs/PoseStamped   smoothed hand pose in a REP-103 frame (X fwd, Y left, Z up)
@@ -93,6 +96,7 @@ class OpenXRBridge(Node):
     def __init__(self):
         super().__init__("openxr_ros2_bridge")
         self.declare_parameter("hand", "right_hand")
+        self.declare_parameter("input_source", "")           # device with the trigger; "" = same as hand
         self.declare_parameter("output_frame", "operator_base")
         self.declare_parameter("smoothing_alpha", 0.35)      # 1 = no smoothing
         self.declare_parameter("max_linear_speed", 0.25)     # m/s clamp
@@ -105,6 +109,7 @@ class OpenXRBridge(Node):
 
         p = self.get_parameter
         hand = str(p("hand").value)
+        inputs = str(p("input_source").value) or hand
         self.out_frame = str(p("output_frame").value)
         self.alpha = float(p("smoothing_alpha").value)
         self.v_max = float(p("max_linear_speed").value)
@@ -117,7 +122,7 @@ class OpenXRBridge(Node):
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(PoseStamped, f"/openxr/{hand}/pose", self.on_pose, qos)
-        self.create_subscription(Joy, f"/openxr/{hand}/inputs", self.on_inputs, qos)
+        self.create_subscription(Joy, f"/openxr/{inputs}/inputs", self.on_inputs, qos)
         self.pub_pose = self.create_publisher(PoseStamped, "~/pose", qos)
         self.pub_twist = self.create_publisher(TwistStamped, "~/twist", qos)
         self.pub_enable = self.create_publisher(Bool, "~/enable", 10)
@@ -138,12 +143,14 @@ class OpenXRBridge(Node):
         self.sq = None          # smoothed orientation
         self.history = []       # (t, position, orientation) of smoothed samples
         self.last_rx = None
+        self.last_input_rx = None
         self.samples = 0
         self.create_timer(0.05, self.watchdog)
-        self.get_logger().info(f"openxr_ros2_bridge: /openxr/{hand} -> {self.out_frame}, "
+        self.get_logger().info(f"openxr_ros2_bridge: /openxr/{hand} (trigger from /openxr/{inputs}) -> {self.out_frame}, "
                                f"alpha={self.alpha}, v_max={self.v_max} m/s, timeout={self.timeout}s")
 
     def on_inputs(self, msg: Joy):
+        self.last_input_rx = self.get_clock().now()
         self.trigger = float(msg.axes[0]) if msg.axes else 0.0
         weld = bool(msg.buttons[self.weld_btn]) if len(msg.buttons) > self.weld_btn else False
         if weld != self.weld:
@@ -222,22 +229,31 @@ class OpenXRBridge(Node):
             self.get_logger().info("trigger released: re-engagement gesture accepted")
         if self.trigger >= self.trig_thr and self.rearm_needed and not self._rearm_warned:
             self._rearm_warned = True
-            self.get_logger().warn("tracking is back but hold-to-run stays released: release and press the trigger to re-engage")
-        enable = self.trigger >= self.trig_thr and not self.rearm_needed
+            self.get_logger().warning("tracking is back but hold-to-run stays released: release and press the trigger to re-engage")
+        enable = self.trigger >= self.trig_thr and not self.rearm_needed and not self._inputs_stale()
         if enable != self.enabled:
             self.enabled = enable
             self.get_logger().info(f"hold-to-run {'ENGAGED' if enable else 'released'}")
         self.pub_enable.publish(Bool(data=enable))
 
+    def _inputs_stale(self):
+        if self.last_input_rx is None:
+            return True
+        return (self.get_clock().now() - self.last_input_rx).nanoseconds * 1e-9 > self.timeout
+
     def watchdog(self):
         if self.last_rx is None:
             return
-        age = (self.get_clock().now() - self.last_rx).nanoseconds * 1e-9
-        if age > self.timeout and self.enabled:
+        now = self.get_clock().now()
+        age = (now - self.last_rx).nanoseconds * 1e-9
+        in_age = (now - self.last_input_rx).nanoseconds * 1e-9 if self.last_input_rx is not None else float("inf")
+        if (age > self.timeout or in_age > self.timeout) and self.enabled:
             self.enabled = False
             self.rearm_needed = True        # motion must not resume by itself when tracking returns
             self.pub_enable.publish(Bool(data=False))
-            self.get_logger().warn(f"OpenXR input timeout ({age*1000:.0f} ms): hold-to-run released, re-engagement required")
+            what = "pose" if age > self.timeout else "trigger"
+            self.get_logger().warning(f"OpenXR {what} input timeout ({max(age, in_age)*1000:.0f} ms): "
+                                   "hold-to-run released, re-engagement required")
 
 
 def main(args=None):

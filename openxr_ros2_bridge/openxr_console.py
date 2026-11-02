@@ -8,14 +8,28 @@ forward), the wheel raises/lowers it, and HOLDING THE LEFT MOUSE BUTTON is the t
 (hold-to-run): the robot only moves while it is held. Keys: arrows / W S move and lift the
 hand, Q E tilt the head, SPACE toggles the trigger, R resets the hand.
 
+With relay_pose_topic set (e.g. a VIVE tracker on the PC), HOLDING T drives the robot with that tracker instead:
+the console then forwards the tracker's pose as the hand pose, and the mouse button still drives with the mouse
+hand. After a change of source the trigger only takes effect 0.25 s later, so the bridge's smoothing has settled
+on the new pose and the clutch anchors there (an instant switch would make the robot jump by the distance between
+the two). T is read straight from the keyboard devices, so it works whichever window has the focus (RViz uses M,
+I, S, ... as its own tool shortcuts); that needs read access to /dev/input (scripts/install_keyboard_uaccess_udev.sh).
+Without it, T (and M) work only while this window has the focus, losing the focus releases them, and the HUD says
+so in red. A keyboard that disappears or cannot be read counts as a released key.
+
 Right pane: what the VR overlay will show later: the ergonomic prompt (info / attention /
 warning from /human/ergo_prompt), the RULA score, and the cell's motion authority.
 
 Publishes exactly what a headset client publishes: /openxr/head/pose, /openxr/right_hand/pose,
 /openxr/left_hand/pose (OpenXR stage frame) and /openxr/right_hand/inputs (trigger).
+With inputs_only:=true it publishes only the inputs: another source (a tracker) provides the pose.
 """
 import math
+import os
+import select
+import struct
 import threading
+import time
 import tkinter as tk
 
 import rclpy
@@ -67,6 +81,8 @@ class ConsoleNode(Node):
         self.declare_parameter("forearm_m", 0.233)
         self.declare_parameter("eye_height_m", 1.22)
         self.declare_parameter("spectator", False)     # true: show the HUD only, publish nothing (another input drives)
+        self.declare_parameter("inputs_only", False)   # true: publish only the trigger/arc inputs (a tracker gives the pose)
+        self.declare_parameter("relay_pose_topic", "")  # hold M: drive with this pose (e.g. /openxr/trackers/torch/pose)
         self.declare_parameter("geometry", "")          # Tk geometry, e.g. "+1900+0", for scripted window placement
         p = self.get_parameter
         self.state, self.lock = state, lock
@@ -88,6 +104,11 @@ class ConsoleNode(Node):
             self.create_subscription(MotionAuthority, "/telecraft/authority", lambda m: self.store("auth", m), latched)
             self.create_subscription(CommandAck, "/telecraft/ack", self.on_ack, 50)
         self.spectator = bool(p("spectator").value)
+        self.inputs_only = bool(p("inputs_only").value)
+        self.relay_topic = str(p("relay_pose_topic").value)
+        self.relay = None                              # (PoseStamped, receive time) of the tracker
+        if self.relay_topic:
+            self.create_subscription(PoseStamped, self.relay_topic, self.on_relay, qos)
         self.geometry = str(p("geometry").value)
         if not self.spectator:
             self.create_timer(1.0 / float(p("rate_hz").value), self.publish)
@@ -103,6 +124,10 @@ class ConsoleNode(Node):
         fut.add_done_callback(lambda f: self.cli_ready.call_async(SetBool.Request(data=True)))
         self.get_logger().info("cell reset requested from the console")
 
+    def on_relay(self, msg):
+        with self.lock:
+            self.relay = (msg, time.monotonic())
+
     def store(self, key, msg):
         with self.lock:
             self.state[key] = msg
@@ -116,9 +141,18 @@ class ConsoleNode(Node):
                 self.state["last_reject"] = (m.reason, self.get_clock().now().nanoseconds * 1e-9)
 
     def publish(self):
+        t = time.monotonic()
         with self.lock:
             hand = tuple(self.state["hand"])
-            trigger = 1.0 if self.state["trigger"] else 0.0
+            want_tracker = (self.state.get("m_trigger", False) or self.state.get("global_trigger", False)) and self.relay_topic != ""
+            want_mouse = self.state["trigger"]
+            src = "tracker" if want_tracker else ("mouse" if want_mouse else self.state.get("src", "mouse"))
+            if src != self.state.get("src", "mouse"):
+                self.state["src"], self.state["arm_at"] = src, t + 0.25    # let the smoothing settle first
+            armed = t >= self.state.get("arm_at", 0.0)
+            trigger = 1.0 if ((want_tracker if src == "tracker" else want_mouse) and armed) else 0.0
+            self.state["trigger_out"] = trigger > 0.5
+            relay = self.relay
             weld = 1 if self.state.get("weld") else 0
             head_pitch = self.state["head_pitch"]
         now = self.get_clock().now().to_msg()
@@ -130,15 +164,78 @@ class ConsoleNode(Node):
             m.pose.orientation.x, m.pose.orientation.y, m.pose.orientation.z, m.pose.orientation.w = q
             pub.publish(m)
 
-        elbow = elbow_estimate(self.shoulder, hand, self.l_upper, self.l_fore)
-        pose(self.pub_rhand, hand, OpenXRSim.hand_quat(v_unit(v_sub(hand, elbow)), 0.0))
-        pose(self.pub_lhand, (-0.25, 0.78, -0.28), (0.0, 0.0, 0.0, 1.0))
-        yaw = math.radians(-12.0 * (hand[0] / 0.3))
-        pose(self.pub_head, (0.0, self.eye_h, 0.0), q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, math.radians(-head_pitch))))
+        if src == "tracker":
+            # forward the tracker as the hand, only while fresh: a stale tracker must look like lost tracking
+            if relay is not None and t - relay[1] < 0.15:
+                m = relay[0]
+                out = PoseStamped()
+                out.header = m.header                      # keep the acquisition time
+                out.pose = m.pose
+                self.pub_rhand.publish(out)
+        elif not self.inputs_only:
+            elbow = elbow_estimate(self.shoulder, hand, self.l_upper, self.l_fore)
+            pose(self.pub_rhand, hand, OpenXRSim.hand_quat(v_unit(v_sub(hand, elbow)), 0.0))
+        if not self.inputs_only:
+            pose(self.pub_lhand, (-0.25, 0.78, -0.28), (0.0, 0.0, 0.0, 1.0))
+            yaw = math.radians(-12.0 * (hand[0] / 0.3))
+            pose(self.pub_head, (0.0, self.eye_h, 0.0), q_mul(q_axis(0, 1, 0, yaw), q_axis(1, 0, 0, math.radians(-head_pitch))))
         j = Joy()
         j.header.stamp, j.header.frame_id = now, self.frame
         j.axes, j.buttons = [trigger, 0.0], [weld, 0, 0]
         self.pub_inputs.publish(j)
+
+
+class GlobalKey(threading.Thread):
+    """Hold state of one key, read from every keyboard's /dev/input/eventN (independent of window focus)."""
+    EVENT = struct.Struct("llHHi")        # struct input_event: timeval, type, code, value
+    EV_KEY = 1
+    CODES = {"t": 20, "m": 50, "space": 57}
+
+    def __init__(self, key, on_change, log):
+        super().__init__(daemon=True)
+        self.code, self.on_change, self.log = self.CODES[key], on_change, log
+        self.devices = []
+        for block in open("/proc/bus/input/devices").read().split("\n\n"):
+            if "kbd" in block and "EV=1" in block:          # keyboards with key events
+                for word in block.split():
+                    if word.startswith("event"):
+                        self.devices.append(f"/dev/input/{word}")
+        self.fds = []
+        for d in self.devices:
+            try:
+                self.fds.append(os.open(d, os.O_RDONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+        self.held = set()
+        self.running = True
+
+    @property
+    def available(self):
+        return bool(self.fds)
+
+    def run(self):
+        while self.running and self.fds:
+            try:
+                ready, _, _ = select.select(self.fds, [], [], 0.2)
+            except (OSError, ValueError):
+                break
+            for fd in ready:
+                try:
+                    data = os.read(fd, self.EVENT.size * 64)
+                except OSError:                              # keyboard unplugged: its key counts as released
+                    self.fds.remove(fd)
+                    self.held.discard(fd)
+                    self.on_change(bool(self.held))
+                    continue
+                for i in range(0, len(data) - self.EVENT.size + 1, self.EVENT.size):
+                    _, _, typ, code, value = self.EVENT.unpack_from(data, i)
+                    if typ == self.EV_KEY and code == self.code:
+                        if value:                          # 1 press, 2 auto-repeat
+                            self.held.add(fd)
+                        else:
+                            self.held.discard(fd)
+                        self.on_change(bool(self.held))
+        self.on_change(False)
 
 
 class Console:
@@ -156,7 +253,7 @@ class Console:
         self.W = self.H = 420
         self.canvas = tk.Canvas(left, width=self.W, height=self.H, bg="#0f141b", highlightthickness=0, cursor="crosshair")
         self.canvas.pack()
-        tk.Label(left, text="mouse: move hand   wheel: lift/lower   HOLD LEFT BUTTON: trigger (robot moves)\n"
+        tk.Label(left, text="mouse: move hand   wheel: lift/lower   HOLD LEFT BUTTON or M: trigger (robot moves)\n"
                             "RIGHT BUTTON or F: arc on/off (WELD mode)   arrows / W S: move / lift   Q E: tilt head   SPACE: toggle trigger\nR: reset hand   X: reset the cell after a FAULT",
                  fg="#98a3b3", bg="#1b2430", justify="left", font=("DejaVu Sans", 9)).pack(anchor="w", pady=(6, 0))
         self.height_bar = tk.Canvas(left, width=self.W, height=18, bg="#0f141b", highlightthickness=0)
@@ -198,6 +295,21 @@ class Console:
                                    relief="flat", padx=10, pady=4, font=("DejaVu Sans", 10, "bold"))
         self.reset_btn.pack(anchor="w", pady=(10, 0))
         self.root.bind("<Key>", self.on_key)
+        for key in ("t", "T", "m", "M"):
+            self.root.bind(f"<KeyPress-{key}>", self.on_m_press, add="+")
+            self.root.bind(f"<KeyRelease-{key}>", self.on_m_release, add="+")
+        self.root.bind("<FocusOut>", lambda e: self.focus_lost())
+        self._m_job = None
+        self.global_key = None
+        if self.node.relay_topic:
+            self.global_key = GlobalKey("t", self.on_global_key, self.node.get_logger())
+            if self.global_key.available:
+                self.global_key.start()
+                self.node.get_logger().info(f"hold-to-run key T read from {len(self.global_key.fds)} keyboard devices "
+                                            "(works whichever window has the focus)")
+            else:
+                self.node.get_logger().warning("cannot read the keyboard devices: T/M work only while the console has "
+                                            "the focus (run scripts/install_keyboard_uaccess_udev.sh)")
         self._last = {}
         self.root.after(100, self.redraw)
 
@@ -220,6 +332,35 @@ class Console:
     def set_trigger(self, on):
         with self.lock:
             self.state["trigger"] = on
+
+    # M held = trigger. While a key is held X11 auto-repeat sends release+press pairs, so a release only counts
+    # when no press follows within 60 ms. Losing the window focus releases it (a missed key-up must not keep the
+    # robot enabled).
+    def on_m_press(self, e):
+        if self._m_job is not None:
+            self.root.after_cancel(self._m_job)
+            self._m_job = None
+        with self.lock:
+            self.state["m_trigger"] = True
+
+    def on_m_release(self, e):
+        if self._m_job is None:
+            self._m_job = self.root.after(60, self.release_m)
+
+    def release_m(self):
+        if self._m_job is not None:
+            self.root.after_cancel(self._m_job)
+        self._m_job = None
+        with self.lock:
+            self.state["m_trigger"] = False
+
+    def on_global_key(self, held):
+        with self.lock:
+            self.state["global_trigger"] = held
+
+    def focus_lost(self):
+        self.release_m()
+        self.set_trigger(False)
 
     def on_key(self, e):
         k = e.keysym.lower()
@@ -256,7 +397,8 @@ class Console:
     def redraw(self):
         with self.lock:
             hand = tuple(self.state["hand"])
-            trig = self.state["trigger"]
+            trig = self.state.get("trigger_out", False)
+            src = self.state.get("src", "mouse")
             head_pitch = self.state["head_pitch"]
             prompt, rula, auth = self.state.get("prompt"), self.state.get("rula"), self.state.get("auth")
             moves, rejected = self.state.get("moves", 0), self.state.get("rejected", 0)
@@ -280,7 +422,20 @@ class Console:
         c.create_oval(px - r, py - r, px + r, py + r, outline=color, width=3)
         c.create_line(px - r - 6, py, px + r + 6, py, fill=color)
         c.create_line(px, py - r - 6, px, py + r + 6, fill=color)
-        c.create_text(px, py + r + 14, text=("TRIGGER: robot follows" if trig else "trigger released") + ("   ARC ON" if self.state.get("weld") else ""), fill=color, font=("DejaVu Sans", 9, "bold"))
+        c.create_text(px, py + r + 14, text=(f"TRIGGER: robot follows the {'TRACKER' if src == 'tracker' else 'mouse'}" if trig else "trigger released") + ("   ARC ON" if self.state.get("weld") else ""), fill=color, font=("DejaVu Sans", 9, "bold"))
+        if self.node.relay_topic:
+            try:
+                focused = self.root.focus_displayof() is not None
+            except (KeyError, tk.TclError):
+                focused = False
+            gk = self.global_key is not None and self.global_key.available
+            if gk:
+                text, col = "hold T (any window): tracker drives   hold mouse button: mouse drives", "#6fdc8c"
+            elif focused:
+                text, col = "hold T here: tracker drives   (T only works while this window has the focus)", "#f0a45c"
+            else:
+                text, col = "NO KEYBOARD FOCUS: click this window, then hold T", "#ff6b6b"
+            c.create_text(self.W / 2, self.H - 14, text=text, fill=col, font=("DejaVu Sans", 10, "bold"))
         hb = self.height_bar
         hb.delete("all")
         frac = (hand[1] - Y_RANGE[0]) / (Y_RANGE[1] - Y_RANGE[0])
@@ -327,7 +482,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        ex.shutdown()
+        ex.shutdown(timeout_sec=1.0)
+        t.join(timeout=2.0)                        # never leave the executor thread running into interpreter exit
         node.destroy_node()
         rclpy.try_shutdown()
 
